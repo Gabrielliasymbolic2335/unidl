@@ -56,8 +56,9 @@ class Setting:
     #: what was on offer without opening anything.
     picker: str = ""
     #: Runtime settings can remain addressable for compatibility while a unified
-    #: editor owns their visible UI. Vault policy is the current example: five
-    #: persisted keys are one coherent decision rather than five unrelated rows.
+    #: editor owns their visible UI. Vault policy is the current example: its
+    #: switches and target lists are one coherent decision rather than unrelated
+    #: rows scattered through the settings screen.
     visible: bool = True
 
     def option_labels(self) -> list[str]:
@@ -728,6 +729,56 @@ GLOBAL_SETTINGS: list[Setting] = [
         "anything. With both on, selected local vaults are always asked first and "
         "only the key IDs they did not have reach the network; a key that comes "
         "back is copied into selected writable local targets.",
+        visible=False,
+    ),
+    Setting(
+        "remote_vault_home_search",
+        "Allow home-screen remote key search",
+        "bool",
+        default=True,
+        help=(
+            "Allow the Home screen to offer an explicit Search remote vault action "
+            "for KID queries. This never searches while typing; it still requires "
+            "a selected searchable backend. The explicit search permission is "
+            "independent from the automatic playback/write master gate."
+        ),
+        visible=False,
+    ),
+    Setting(
+        "remote_vault_manual_add",
+        "Allow manual writes to remote vaults",
+        "bool",
+        default=True,
+        help=(
+            "Allow Add keys from the Home/search screen to send manually entered "
+            "KID:key pairs to selected remote vaults. Local vault writes remain "
+            "available when this is off."
+        ),
+        visible=False,
+    ),
+    Setting(
+        "remote_vault_auto_store",
+        "Store licensed keys in remote vaults",
+        "bool",
+        default=True,
+        help=(
+            "After a service licence succeeds, push its KID:key pairs to selected "
+            "remote writable vaults. Each destination is independent; a failed "
+            "remote write is logged as a warning and never fails the download."
+        ),
+        visible=False,
+    ),
+    Setting(
+        "remote_vault_auto_lookup",
+        "Check remote vaults before licensing",
+        "bool",
+        default=True,
+        help=(
+            "Before a service's own licence request, query selected remote vaults "
+            "for missing KIDs. A complete hit skips that service licence; a partial "
+            "hit is merged with the service response. The service remains the only "
+            "licence transport."
+        ),
         visible=False,
     ),
     # Options are filled with the configured vault names by global_settings().

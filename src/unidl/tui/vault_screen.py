@@ -172,10 +172,22 @@ class AddKeysScreen(Screen[AddKeysResult | None]):
 
     def on_mount(self) -> None:
         self._vaults = self.app.vaults
-        self._descriptors = [
+        configured_descriptors = [
             descriptor
             for descriptor in vaults.configured_vaults(self.app.config)
             if descriptor.writable
+        ]
+        # Local manual entry is always available. Sending a manually pasted key
+        # to a remote service is a separate, explicit policy switch and must not
+        # be re-enabled merely by selecting a destination in the picker.
+        remote_manual_enabled = bool(
+            self.app.globals.get("remote_vault", False)
+            and self.app.globals.get("remote_vault_manual_add", True)
+        )
+        self._descriptors = [
+            descriptor
+            for descriptor in configured_descriptors
+            if not descriptor.remote or remote_manual_enabled
         ]
         configured = vaults.parse_targets(
             self.app.globals.get("vault_write_targets", "")
@@ -185,12 +197,10 @@ class AddKeysScreen(Screen[AddKeysResult | None]):
             if configured is None
             else {name.casefold() for name in configured}
         )
-        remote_enabled = bool(self.app.globals.get("remote_vault", False))
         self._write_targets = tuple(
             descriptor.name
             for descriptor in self._descriptors
             if descriptor.name.casefold() in wanted
-            and (not descriptor.remote or remote_enabled)
         )
         self._update_destination_state()
         self._rebuild_services()
@@ -399,9 +409,13 @@ class AddKeysScreen(Screen[AddKeysResult | None]):
     def _selected_backends(self) -> list[vaults.Vault]:
         if self._vaults is None:
             return []
+        remote_enabled = bool(
+            self.app.globals.get("remote_vault", False)
+            and self.app.globals.get("remote_vault_manual_add", True)
+        )
         return self._vaults.enabled(
             use_local=True,
-            use_remote=True,
+            use_remote=remote_enabled,
             local_names=self._write_targets,
             remote_names=self._write_targets,
         )
@@ -589,12 +603,16 @@ class AddKeysScreen(Screen[AddKeysResult | None]):
                 finally:
                     backend.vault.close()
             if self._vaults is not None:
+                remote_enabled = bool(
+                    self.app.globals.get("remote_vault", False)
+                    and self.app.globals.get("remote_vault_manual_add", True)
+                )
                 reports.extend(
                     self._vaults.add_pairs_report(
                         service,
                         pairs,
                         use_local=False,
-                        use_remote=True,
+                        use_remote=remote_enabled,
                         remote_names=targets,
                         title=title or None,
                         source="manual",

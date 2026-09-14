@@ -98,6 +98,19 @@ KID is still sent to that service's licence endpoint. Init-data discovery runs
 before the final all-cached decision when a manifest can hide additional KIDs
 (for example an HLS media playlist or a Widevine v1 PSSH).
 
+This ordering also applies when a service declares `USES.drm = self` (for
+example Apple, YouTube and Sling) and **Use remote key vaults** is enabled.
+Immediately before its service-owned `get_keys()` call, Core performs the same
+local-first/remote-second lookup using the KIDs already present in the parsed
+inventory. A complete hit skips that service's licence request; a partial hit is
+placed in the DRM context and merged with the keys returned by the service. The
+service still owns its session, challenge and licence endpoint — a vault is never
+used as a replacement transport. With the remote switch off, these legacy
+service-owned flows keep their existing local handling. If such a service
+discovers additional per-track PSSH/KIDs only while running its own parser, it
+continues through that parser and the service licence path; Core never guesses a
+KID-only request for it.
+
 Lookup prefers a same-service match, then falls back to any service. KIDs are
 globally unique in practice, so a key imported under one service name still
 serves another.
@@ -195,10 +208,16 @@ Helpers: `normalize_hex()` accepts dashed, uppercase and quoted forms;
 Reusing a stored key is most of the value here, but it has to be possible to switch
 off — otherwise there is no way to make a run actually talk to the licence server.
 
-The unified **Vault policy** panel contains the two safety switches:
+The unified **Vault policy** panel contains the master safety switches and four
+independent remote-operation switches:
 
 - **Use the local key vault** — on by default
 - **Use remote key vaults** — off by default
+- **Home-screen remote key search** — on by default; it is an explicit action,
+  never runs while typing, and requires a selected searchable backend
+- **Manual Add keys to remote vaults** — on by default
+- **Store licensed keys in remote vaults** — on by default
+- **Check remote vaults before licensing** — on by default
 
 Three target pickers in the same panel narrow those switches and control search:
 
@@ -207,24 +226,30 @@ Three target pickers in the same panel narrow those switches and control search:
 - **Search vaults** — local backends by default; remote
   search is always an explicit click
 
-The first controls automatic playback lookup. The second controls licence writes,
-live-key rotation writes and which local databases receive a remote lookup
-backfill. The third is independent: it controls which local databases appear in
-home search and which capability-declared remote backends may be queried there.
-Choosing no targets is valid in every list.
+The first target picker controls automatic playback lookup. The second controls
+licence writes, live-key rotation writes and which local databases receive a
+remote lookup backfill. The third controls which local databases appear in home
+search and which capability-declared remote backends may be queried there.
+Choosing no targets is valid in every list. The remote-operation switches are
+deliberately separate: for example, you can read a remote vault before licensing
+while refusing to upload newly acquired keys, or allow manual uploads without
+enabling automatic uploads. Turning off the master **Use remote key vaults** gate
+overrides automatic lookup and store; the explicit Home search has its own
+permission and does not erase its preference.
 
-Two rather than one because they are two different decisions. Reading a local file
-is free and private. Reaching a remote vault is a network call that also sends your
+The master switch remains because reading a local file is free and private while
+reaching a remote vault is a network call that also sends your
 keys to somebody else's server.
 
 With both target lists left at their `all` default:
 
-| | Local read | Local write | Remote read | Remote write |
+| | Local read | Local write | Remote read before licence | Remote write after licence |
 |---|---|---|---|---|
 | local on, remote off *(default)* | yes | yes | no | no |
-| local on, remote on | first | yes | only the KIDs local missed | yes |
-| local off, remote on | no | yes | yes | yes |
-| both off | no | yes | no | no |
+| local on, remote on; lookup/store on | first | yes | only KIDs local missed | yes |
+| local on, remote on; lookup on/store off | first | yes | only KIDs local missed | no |
+| local off, remote on; lookup/store on | no | yes | yes | yes |
+| both master/operation gates off | no | yes | no | no |
 
 Two things in that table are deliberate and worth stating:
 

@@ -259,6 +259,8 @@ def _audio_default_bandwidth(itag: int | None) -> int | None:
 def _audio_default_codec(itag: int | None) -> str | None:
     if itag in {148, 149}:
         return "aac.mp4a.40.2"
+    if itag == 329:
+        return "ec-3"
     if itag == 381:
         return "ac-3"
     return None
@@ -267,7 +269,7 @@ def _audio_default_codec(itag: int | None) -> str | None:
 def _audio_default_channels(itag: int | None) -> str | None:
     if itag in {148, 149}:
         return "2.0"
-    if itag == 381:
+    if itag in {329, 381}:
         return "5.1"
     return None
 
@@ -618,6 +620,8 @@ def _title_is_live(title: dict[str, Any]) -> bool:
 
 
 def _title_is_dvr_vod(title: dict[str, Any]) -> bool:
+    if bool(title.get("dvr")):
+        return True
     source = _str_or_none(title.get("source") or title.get("playback_source") or title.get("playbackSource"))
     return bool(source and source.lower() == "dvr")
 

@@ -136,7 +136,22 @@ class GlobalSearchScreen(Screen):
     @property
     def local_vault_names(self) -> tuple[str, ...] | None:
         """Local backends visible to home-vault search."""
-        return vaults.parse_targets(self.app.globals.get("vault_search_targets", ""))
+        selected = vaults.parse_targets(self.app.globals.get("vault_search_targets", ""))
+        if selected is None:
+            return None
+        local_names = {
+            descriptor.name.casefold()
+            for descriptor in vaults.configured_vaults(self.app.config)
+            if not descriptor.remote
+        }
+        return tuple(name for name in selected if name.casefold() in local_names)
+
+    @property
+    def remote_home_search_enabled(self) -> bool:
+        """Whether the home screen may issue an explicit remote lookup."""
+        # This is deliberately independent from the automatic playback/write
+        # master gate: the search row is itself an explicit user confirmation.
+        return bool(self.app.globals.get("remote_vault_home_search", True))
 
     @property
     def remote_vault_descriptors(self) -> list[vaults.VaultDescriptor]:
@@ -147,7 +162,12 @@ class GlobalSearchScreen(Screen):
         descriptors = [
             descriptor
             for descriptor in vaults.configured_vaults(self.app.config)
-            if descriptor.remote and descriptor.searchable and descriptor.enabled
+            if (
+                descriptor.remote
+                and descriptor.searchable
+                and descriptor.enabled
+                and self.remote_home_search_enabled
+            )
         ]
         if selected is None:
             return descriptors
@@ -155,7 +175,13 @@ class GlobalSearchScreen(Screen):
         return [descriptor for descriptor in descriptors if descriptor.name.casefold() in wanted]
 
     def _search_target_signature_value(self) -> str:
-        return str(self.app.globals.get("vault_search_targets", "") or "")
+        return "|".join(
+            (
+                str(self.app.globals.get("vault_search_targets", "") or ""),
+                str(self.app.globals.get("remote_vault", False)),
+                str(self.app.globals.get("remote_vault_home_search", True)),
+            )
+        )
 
     @property
     def service(self) -> Service | None:

@@ -1071,6 +1071,12 @@ TextWidget {
     border: round $accent;
     background: $recessed;
 }
+/* Half-block QR is one module per column. Grow with the code rather than
+   wrapping modules, which would break the finder/timing grid a camera needs. */
+.manual-card.qr-card {
+    width: auto;
+    min-width: 78;
+}
 /* the field belongs inside the card when the card is what it is answering, and
    as wide as the values above it rather than as wide as its own placeholder */
 .manual-card .ask-input {
@@ -1161,6 +1167,7 @@ TextWidget {
     height: auto;
     color: #000000;
     background: #ffffff;
+    text-style: none;
     text-wrap: nowrap;
 }
 .qr-render-error {
@@ -2054,6 +2061,36 @@ ModalScreen.editor {
     padding: 0 1;
     color: $muted;
 }
+#resource-policy-remote-operations-help {
+    width: 100%;
+    /* This copy is one line at the policy card width.  Keeping a one-row
+       box avoids reserving a second row for bottom padding. */
+    height: 1;
+    max-height: 1;
+    margin: -1 0 0 0;
+    padding: 0 1;
+    color: $muted;
+}
+#resource-policy-remote-operations {
+    width: 100%;
+    height: auto;
+    min-height: 4;
+    margin: 0 0 1 0;
+    padding: 0 1;
+    background: $base;
+    /* A two-row border consumes both rows and clips all children.  Side
+       borders keep the visual grouping without consuming vertical content. */
+    border-left: solid $rule;
+    border-right: solid $rule;
+}
+#resource-policy-remote-operations VaultCheckbox {
+    width: 100%;
+    min-width: 0;
+    height: 1;
+    min-height: 1;
+    padding: 0 1;
+    margin: 0;
+}
 .resource-policy-target-copy {
     width: 1fr;
     height: 2;
@@ -2067,12 +2104,15 @@ ModalScreen.editor {
 }
 .resource-policy-row {
     width: 100%;
-    height: 4;
-    min-height: 4;
+    height: 2;
+    min-height: 2;
     margin: 0 0 1 0;
     padding: 0 0 0 1;
     background: $base;
-    border: round $rule;
+    /* Keep two lines (title + target summary) available inside a compact
+       row. A full border on height 2 leaves zero content rows. */
+    border-left: solid $rule;
+    border-right: solid $rule;
     align: left middle;
 }
 .resource-policy-row Static {
@@ -2098,7 +2138,7 @@ ModalScreen.editor {
     color: $foreground;
 }
 #resource-policy-actions {
-    height: 3;
+    height: 2;
     margin-top: 0;
 }
 #resource-confirm-card {
@@ -2146,7 +2186,8 @@ ModalScreen.editor {
     padding-top: 0;
     padding-bottom: 0;
 }
-.short #resource-policy-help, .short .resource-policy-gate-note {
+.short #resource-policy-help, .short .resource-policy-gate-note,
+.short #resource-policy-remote-operations-help {
     display: none;
 }
 .short .resource-policy-section {
@@ -2154,6 +2195,11 @@ ModalScreen.editor {
 }
 .short #resource-policy-gates {
     height: 3;
+    margin: 0;
+}
+.short #resource-policy-remote-operations {
+    height: auto;
+    min-height: 4;
     margin: 0;
 }
 .short .resource-policy-gate {
@@ -2166,8 +2212,8 @@ ModalScreen.editor {
     min-height: 2;
     margin: 0;
     padding: 0 1;
-    border: none;
     border-left: solid $rule;
+    border-right: solid $rule;
 }
 .short #resource-policy-actions {
     height: 2;

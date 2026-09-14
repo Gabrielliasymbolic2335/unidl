@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
+from textual import events
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, HorizontalScroll, Vertical, VerticalScroll
@@ -47,6 +48,26 @@ from .input import ClipboardInput as Input
 from .vault_targets import VaultCheckbox, VaultTargetResult, VaultTargetScreen
 
 _NAME_RE = re.compile(r"^[^\s][^\n\r]*$")
+
+
+class ResourceOptionList(OptionList):
+    """Option list whose mouse clicks select without activating a resource.
+
+    The stock OptionList turns a click into ``OptionSelected``. On this screen
+    that event historically toggled a vault, so selecting a remote row to edit
+    could silently enable/disable it. Keyboard Enter still emits the normal
+    selection event; only the mouse path is intentionally passive.
+    """
+
+    async def _on_click(self, event: events.Click) -> None:
+        clicked_option = event.style.meta.get("option")
+        if clicked_option is not None and not self._options[clicked_option].disabled:
+            # OptionList's default handler is also found through the MRO after
+            # this override.  Prevent it explicitly, otherwise it calls
+            # ``action_select`` and the manager treats a plain mouse selection
+            # as the Enable/disable command.
+            event.prevent_default()
+            self.highlighted = clicked_option
 
 
 def _text(value: object) -> str:
@@ -523,6 +544,21 @@ class VaultPolicyScreen(ModalScreen[bool]):
         self.values = {
             "local_vault": bool(globals_scope.get("local_vault", True)),
             "remote_vault": bool(globals_scope.get("remote_vault", False)),
+            # Keep these opt-ins independent. Their defaults preserve the old
+            # remote_vault behavior for existing configurations while allowing a
+            # user to disable one network operation without disabling the others.
+            "remote_vault_home_search": bool(
+                globals_scope.get("remote_vault_home_search", True)
+            ),
+            "remote_vault_manual_add": bool(
+                globals_scope.get("remote_vault_manual_add", True)
+            ),
+            "remote_vault_auto_store": bool(
+                globals_scope.get("remote_vault_auto_store", True)
+            ),
+            "remote_vault_auto_lookup": bool(
+                globals_scope.get("remote_vault_auto_lookup", True)
+            ),
             "vault_read_targets": str(globals_scope.get("vault_read_targets", "") or ""),
             "vault_write_targets": str(globals_scope.get("vault_write_targets", "") or ""),
             "vault_search_targets": str(globals_scope.get("vault_search_targets", "") or ""),
@@ -550,6 +586,32 @@ class VaultPolicyScreen(ModalScreen[bool]):
                         id="resource-policy-remote",
                     )
                     yield Static(tr("resource.policy.remote_note"), classes="resource-policy-gate-note")
+            yield Static(tr("resource.policy.remote_operations"), classes="resource-policy-section")
+            yield Static(tr("resource.policy.remote_operations_help"), id="resource-policy-remote-operations-help")
+            # Keep one operation per row.  The labels are intentionally
+            # descriptive, and two half-width columns make them disappear on
+            # normal terminal widths when a checkbox's label cannot wrap.
+            with Vertical(id="resource-policy-remote-operations"):
+                yield VaultCheckbox(
+                    tr("resource.policy.home_search"),
+                    value=self.values["remote_vault_home_search"],
+                    id="resource-policy-home-search",
+                )
+                yield VaultCheckbox(
+                    tr("resource.policy.manual_add"),
+                    value=self.values["remote_vault_manual_add"],
+                    id="resource-policy-manual-add",
+                )
+                yield VaultCheckbox(
+                    tr("resource.policy.auto_store"),
+                    value=self.values["remote_vault_auto_store"],
+                    id="resource-policy-auto-store",
+                )
+                yield VaultCheckbox(
+                    tr("resource.policy.auto_lookup"),
+                    value=self.values["remote_vault_auto_lookup"],
+                    id="resource-policy-auto-lookup",
+                )
             yield Static(tr("resource.policy.destinations"), classes="resource-policy-section")
             with Horizontal(classes="resource-policy-row"):
                 with Vertical(classes="resource-policy-target-copy"):
@@ -621,9 +683,30 @@ class VaultPolicyScreen(ModalScreen[bool]):
     def action_apply(self) -> None:
         self.values["local_vault"] = self.query_one("#resource-policy-local", Checkbox).value
         self.values["remote_vault"] = self.query_one("#resource-policy-remote", Checkbox).value
+        self.values["remote_vault_home_search"] = self.query_one(
+            "#resource-policy-home-search", Checkbox
+        ).value
+        self.values["remote_vault_manual_add"] = self.query_one(
+            "#resource-policy-manual-add", Checkbox
+        ).value
+        self.values["remote_vault_auto_store"] = self.query_one(
+            "#resource-policy-auto-store", Checkbox
+        ).value
+        self.values["remote_vault_auto_lookup"] = self.query_one(
+            "#resource-policy-auto-lookup", Checkbox
+        ).value
         for key, value in self.values.items():
             self.globals.set(key, value)
         self.dismiss(True)
+
+    def action_close(self) -> None:
+        """Commit policy changes when the top-right close mark is used.
+
+        The close mark is an explicit way to finish editing this settings
+        panel, not the same as Escape/Cancel.  Persist the checkbox values so
+        reopening the policy screen reflects what the user selected.
+        """
+        self.action_apply()
 
     def action_cancel(self) -> None:
         self.dismiss(False)
@@ -679,7 +762,7 @@ class ResourceManagerScreen(Screen[None]):
         with Horizontal(id="statusline"):
             yield Static("", id="crumbs-pill", classes="pill")
         with Vertical(id="resource-manager-body"):
-            yield OptionList(id="resource-list")
+            yield ResourceOptionList(id="resource-list")
             with HorizontalScroll(id="resource-manager-actions"):
                 yield Button(tr("resource.use_cdm"), id="resource-use")
                 yield Button(tr("resource.add_remote"), id="resource-add")
@@ -916,6 +999,7 @@ class ResourceManagerScreen(Screen[None]):
         self._refresh_actions()
 
     def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
+        """Activate a resource selected with keyboard Enter."""
         event.stop()
         self.action_activate()
 

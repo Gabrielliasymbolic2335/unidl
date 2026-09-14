@@ -14,6 +14,7 @@ and extending the project.
   external tools, package installs and runtime data.
 - [Publishing](publishing.md) — PyPI tokens, trusted publishing and GitHub
   account switching.
+- [Changelog](../CHANGELOG.md) — public release notes.
 - [Native downloader](downloader-integration.md) — manifest inputs and delivery
   integration.
 - [Testing](testing.md) — offline checks, live checks and regression practice.

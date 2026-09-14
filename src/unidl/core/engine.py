@@ -329,6 +329,18 @@ class _StructuredProgressScreen:
         # speed and ETA are appended only when there is room for each whole field.
         fixed_tail = bar_width + 2 + 4 + 1 + size_width
         label_width = max(4, min(longest_label, 28, width - fixed_tail - 2))
+        # Speed is the one live value that tells the user whether transfer is
+        # actually moving. On a narrow terminal the old append-only ordering
+        # spent the remaining cells on the segment counter and then dropped
+        # speed entirely. Reserve room for it by shortening the label first;
+        # ETA and the counter remain optional when the row is crowded.
+        longest_speed = max((len(record[4]) for record in records), default=0)
+        if longest_speed:
+            speed_room = longest_speed + 1
+            label_width = max(
+                4,
+                min(label_width, width - fixed_tail - 2 - speed_room),
+            )
         rows: list[str] = []
         for label, percent, size, segments, speed, eta, done in records:
             if len(label) > label_width:
@@ -336,7 +348,9 @@ class _StructuredProgressScreen:
             filled = max(0, min(bar_width, round(bar_width * percent / 100)))
             bar = "━" * filled + "─" * (bar_width - filled)
             row = f"{label:<{label_width}}  {bar} {percent:3.0f}% {size:<{size_width}}"
-            for extra in (segments, speed, eta, done):
+            # Keep speed ahead of optional metadata so a narrow delivery card
+            # still reports throughput instead of looking stalled.
+            for extra in (speed, segments, eta, done):
                 if extra and len(row) + 1 + len(extra) <= width:
                     row += f" {extra}"
             rows.append(row[:width])
@@ -922,6 +936,38 @@ class Engine:
         )
 
     @staticmethod
+    def remote_vault_operation_enabled(
+        settings: Settings | None,
+        operation: str,
+    ) -> bool:
+        """Return whether one remote operation is allowed by policy.
+
+        ``remote_vault`` remains the master network/write safety gate for
+        compatibility. The granular switches only narrow it; an unset new key
+        defaults to the historical behavior so existing configurations do not
+        silently change when upgraded.
+        """
+        if settings is None:
+            return False
+        # Home-screen search is an explicit, user-triggered network action and
+        # historically remained available when the automatic playback/write
+        # master gate was off. Its own switch is the permission boundary; the
+        # other operations remain behind ``remote_vault``.
+        if operation == "search":
+            return bool(settings.get("remote_vault_home_search", True))
+        if not bool(settings.get("remote_vault", False)):
+            return False
+        key = {
+            "lookup": "remote_vault_auto_lookup",
+            "store": "remote_vault_auto_store",
+            "search": "remote_vault_home_search",
+            "manual_add": "remote_vault_manual_add",
+        }.get(operation)
+        if key is None:
+            raise ValueError(f"unknown remote vault operation: {operation!r}")
+        return bool(settings.get(key, True))
+
+    @staticmethod
     def vault_targets(
         settings: Settings | None,
     ) -> tuple[
@@ -938,17 +984,20 @@ class Engine:
         settings narrow those gates to named vaults; ``None`` means every vault
         in that category and ``()`` means none.
         """
-        use_local, use_remote = Engine.vault_use(settings)
+        use_local = bool(settings.get("local_vault", True)) if settings is not None else True
+        use_remote = Engine.remote_vault_operation_enabled(settings, "lookup")
         if settings is None:
             return use_local, use_remote, None, None, None, None
         read = vaults.parse_targets(settings.get("vault_read_targets", ""))
         write = vaults.parse_targets(settings.get("vault_write_targets", ""))
-        return use_local, use_remote, read, read, write, write
+        write_remote = Engine.remote_vault_operation_enabled(settings, "store")
+        return use_local, use_remote, read, read, write, write if write_remote else ()
 
     @staticmethod
     def vault_reads(settings: Settings | None) -> bool:
         """Whether any vault may answer instead of the licence server."""
-        return any(Engine.vault_use(settings))
+        use_local, use_remote, *_targets = Engine.vault_targets(settings)
+        return use_local or use_remote
 
     @staticmethod
     def _drm_key_ids(playback: Playback) -> list[str]:
@@ -969,14 +1018,27 @@ class Engine:
             for header in drm.context.get("wrm_headers") or []:
                 for kid in playready.key_ids_from_header(str(header)):
                     add(kid)
-        elif drm.system == WIDEVINE and drm.pssh:
+        elif drm.system == WIDEVINE:
             # Widevine v1 PSSH boxes can carry several KIDs even when the
-            # UniDL stream metadata exposes only the first one.
+            # UniDL stream metadata exposes only the first one. Service-owned
+            # flows such as Sling may keep additional per-playlist PSSH values
+            # in their private context, so include those before deciding that
+            # a remote vault hit covers the whole title.
             try:
                 from pywidevine.pssh import PSSH
 
-                for kid in PSSH(drm.pssh).key_ids:
-                    add(kid)
+                pssh_values = [
+                    drm.pssh,
+                    *(drm.context.get("pssh_values") or []),
+                ]
+                seen: set[str] = set()
+                for value in pssh_values:
+                    text = str(value or "").strip()
+                    if not text or text in seen:
+                        continue
+                    seen.add(text)
+                    for kid in PSSH(text).key_ids:
+                        add(kid)
             except Exception:  # noqa: BLE001 - malformed optional init data is ignored
                 pass
         return found
@@ -1151,14 +1213,14 @@ class Engine:
         """
         if not playback.keys:
             return 0
-        _use_local, use_remote, _read_local, _read_remote, write_local, write_remote = (
+        _use_local, _use_remote, _read_local, _read_remote, write_local, write_remote = (
             self.vault_targets(settings)
         )
         reports = self.vaults.add_pairs_report(
             service.ID,
             playback.keys,
             use_local=True,
-            use_remote=use_remote,
+            use_remote=bool(write_remote),
             local_names=write_local,
             remote_names=write_remote,
             title=playback.save_name,
@@ -1166,6 +1228,17 @@ class Engine:
             source="license",
             cdm=self.device_used(playback, service) or None,
         )
+        for report in reports:
+            if report.error:
+                self.log(
+                    f"warning: vault {report.name} could not store acquired keys "
+                    f"({report.error}); continuing"
+                )
+            elif report.skipped:
+                self.log(
+                    f"warning: vault {report.name} skipped acquired keys "
+                    f"({report.skipped}); continuing"
+                )
         accepted = [
             report
             for report in reports
@@ -1214,7 +1287,7 @@ class Engine:
                 return pairs
             (
                 _use_local,
-                use_remote,
+                _use_remote,
                 _read_local,
                 _read_remote,
                 write_local,
@@ -1224,7 +1297,10 @@ class Engine:
                 service.ID,
                 pairs,
                 use_local=True,
-                use_remote=use_remote,
+                # A live key discovered after recording starts is an acquired
+                # key, so remote writes follow the store policy, not the lookup
+                # policy used below for cache reads.
+                use_remote=bool(write_remote),
                 local_names=write_local,
                 remote_names=write_remote,
                 title=playback.save_name,
@@ -1513,8 +1589,73 @@ class Engine:
             )
 
         if service.USES.is_self("drm"):
+            # Service-owned DRM still gets the same vault opportunity as the
+            # registry-backed path. The service remains the only licence
+            # transport: ``vault_lookup`` merely supplies already-known
+            # KID:key pairs and never creates a challenge or calls a licence
+            # endpoint. Keep the lookup here (after the licence inventory has
+            # been built) so a service's auth/session code is not bypassed at
+            # title-resolution time.
+            cached: list[str] = []
+            # ``drm=self`` services historically own their local key handling.
+            # Keep that compatibility path intact when the remote switch is
+            # off; the opt-in remote lookup below is the new cross-service
+            # behavior requested by the user. When remote is enabled,
+            # ``vault_lookup`` still checks selected local vaults first and only
+            # sends local misses over the network.
+            use_remote = self.remote_vault_operation_enabled(settings, "lookup")
+            if inventory_tracks is not None and use_remote:
+                # A self-owned service may leave init data empty until the
+                # manifest is read (Apple/Sling HLS is a common example). Give
+                # the registry extractor one chance to populate KIDs before
+                # the vault query, without taking ownership of the service's
+                # subsequent license exchange.
+                if (
+                    not drm_registry.init_data_for(
+                        playback.drm, playback.drm.system or WIDEVINE
+                    )
+                    and not drm.context.get("license_track_kids")
+                ):
+                    try:
+                        self.resolve_init_data(playback, inventory_tracks)
+                    except Exception as exc:  # noqa: BLE001 - service parser remains authoritative
+                        self.log(f"vault: core init-data probe skipped ({exc})")
+                if playback.drm.clear:
+                    playback.keys = []
+                    return playback.keys
+                cached = self.vault_lookup(playback, inventory_tracks, service, settings)
+                if cached:
+                    self.log(
+                        f"{getattr(service, 'NAME', service.ID)} keys served from the vault; "
+                        "skipping the service license request"
+                    )
+                    playback.keys = self._format_keys(service, playback, cached)
+                    return playback.keys
+
             self.log("Requesting keys from the service")
-            playback.keys = list(service.get_keys(playback) or [])
+            fresh = list(service.get_keys(playback) or [])
+            # A partial vault hit is deliberately retained by ``vault_lookup``.
+            # Merge it before formatting/storing so a service-owned flow cannot
+            # drop a cached KID when its own exchange returns only the missing
+            # PlayReady header's key.
+            vault_keys = playback.drm.context.get("vault_keys") if playback.drm else None
+            playback.keys = self._merge_key_pairs(vault_keys or [], fresh)
+            if vault_keys:
+                # Keep any service-specific opaque values alongside the
+                # normalized pairs. Most self-owned flows use KID:key, but a
+                # helper is allowed to return another representation and a
+                # partial vault hit must not erase it.
+                seen = set(playback.keys)
+                for value in fresh:
+                    text = str(value)
+                    if split_pair(text) is None and text not in seen:
+                        playback.keys.append(text)
+                        seen.add(text)
+            if not playback.keys:
+                # Some service-owned DRM implementations return an opaque key
+                # representation rather than ``kid:key``. Preserve that legacy
+                # contract instead of silently turning it into an empty result.
+                playback.keys = fresh
             self.store_keys(playback, service, settings)
             playback.keys = self._format_keys(service, playback, playback.keys)
             return playback.keys

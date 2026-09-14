@@ -3790,6 +3790,35 @@ def _decode_data_uri(value: str) -> bytes:
 
 
 def _openssl_decrypt(data: bytes, method: str, key: bytes, iv: bytes | None) -> bytes:
+    """Decrypt one HLS AES segment in-process when cryptography is available.
+
+    AES-128 HLS is common on finite streams. Keeping this path in the current
+    worker avoids starting an ``openssl`` process for every segment while the
+    command fallback below still supports stripped-down legacy installations.
+    """
+    if method in {"AES_128", "AES_128_ECB"}:
+        try:
+            from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+        except ImportError:
+            # ``cryptography`` is a normal UniDL dependency, but preserving the
+            # old path gives a useful result for manually assembled runtimes.
+            pass
+        else:
+            if len(key) != 16:
+                raise DownloadError(f"{method} custom HLS key must be 16 bytes.")
+            if method == "AES_128":
+                if iv is None or len(iv) != 16:
+                    raise DownloadError("AES_128 custom HLS IV must be 16 bytes.")
+                cipher_mode = modes.CBC(iv)
+            else:
+                cipher_mode = modes.ECB()
+            try:
+                decryptor = Cipher(algorithms.AES(key), cipher_mode).decryptor()
+                clear = decryptor.update(data) + decryptor.finalize()
+            except ValueError as exc:
+                raise DownloadError(f"custom HLS decryption failed: {exc}") from exc
+            return _pkcs7_unpad(clear)
+
     executable = shutil.which("openssl")
     if not executable:
         raise DownloadError("openssl not found; custom HLS segment decryption needs openssl.")

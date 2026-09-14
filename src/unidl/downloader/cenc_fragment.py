@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import mmap
+import os
+import shutil
+import tempfile
 import threading
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
@@ -10,6 +14,11 @@ CTR_SCHEMES = {b"cenc", b"cens"}
 CBC_SCHEMES = {b"cbcs", b"cbc1"}
 PIFF_SAMPLE_ENCRYPTION_UUID = bytes.fromhex("a2394f525a9b4f14a2446c427c648df4")
 _AES_ECB_THREAD_LOCAL = threading.local()
+
+# A whole-file CENC pass should never create a second resident copy of the
+# media. Keep the original bytearray path for small fragments, but map larger
+# files and decrypt directly into a disk-backed output mapping.
+MMAP_DECRYPT_THRESHOLD = 256 * 1024 * 1024
 
 
 @dataclass(frozen=True, slots=True)
@@ -118,12 +127,142 @@ def decrypt_cenc_fragment(
 
     source = Path(input_path)
     output = Path(output_path)
+    try:
+        source_size = source.stat().st_size
+    except OSError:
+        source_size = 0
+    if source_size >= MMAP_DECRYPT_THRESHOLD:
+        return _decrypt_cenc_fragment_mmap(
+            source,
+            output,
+            keys,
+            expected_kids,
+            init_path,
+            default_constant_iv,
+            data_callback,
+            init_metadata,
+        )
     data = bytearray(source.read_bytes())
+    return _decrypt_cenc_fragment_buffer(
+        data,
+        source,
+        output,
+        keys,
+        expected_kids,
+        init_path,
+        default_constant_iv,
+        data_callback,
+        init_metadata,
+    )
+
+
+def _decrypt_cenc_fragment_mmap(
+    source: Path,
+    output: Path,
+    keys: Iterable[object],
+    expected_kids: Iterable[str | None] | None,
+    init_path: str | Path | None,
+    default_constant_iv: bytes | None,
+    data_callback: Callable[[bytearray], None] | None,
+    init_metadata: CencInitMetadata | None,
+) -> Path | None:
+    """Decrypt a large fragmented MP4 without materialising it in RAM.
+
+    The source is copied in bounded chunks to a temporary output, then that
+    output is memory-mapped writable. MP4 parsing and sample writes operate
+    against the mapping, so resident memory is bounded by the OS page cache and
+    the largest individual sample rather than the file size.
+    """
+    output.parent.mkdir(parents=True, exist_ok=True)
+    temporary: Path | None = None
+    temporary_fd = -1
+    try:
+        temporary_fd, temporary_name = tempfile.mkstemp(
+            prefix=f".{output.name}.",
+            suffix=".tmp",
+            dir=output.parent,
+        )
+        temporary = Path(temporary_name)
+        os.close(temporary_fd)
+        temporary_fd = -1
+        with source.open("rb") as source_handle, temporary.open("wb") as target_handle:
+            shutil.copyfileobj(source_handle, target_handle, length=8 * 1024 * 1024)
+            target_handle.flush()
+        with temporary.open("r+b") as handle:
+            with mmap.mmap(handle.fileno(), 0, access=mmap.ACCESS_WRITE) as mapped:
+                last_released = 0
+
+                def release_pages_through(end: int) -> None:
+                    nonlocal last_released
+                    if end <= last_released:
+                        return
+                    page_size = getattr(mmap, "PAGESIZE", 4096)
+                    start = (last_released // page_size) * page_size
+                    aligned_end = min(len(mapped), ((end + page_size - 1) // page_size) * page_size)
+                    if aligned_end <= start:
+                        return
+                    length = aligned_end - start
+                    try:
+                        mapped.flush(start, length)
+                    except (OSError, ValueError):
+                        return
+                    try:
+                        mapped.madvise(mmap.MADV_DONTNEED, start, length)
+                    except (AttributeError, OSError, ValueError):
+                        pass
+                    last_released = end
+
+                result = _decrypt_cenc_fragment_buffer(
+                    mapped,
+                    source,
+                    output,
+                    keys,
+                    expected_kids,
+                    init_path,
+                    default_constant_iv,
+                    data_callback,
+                    init_metadata,
+                    write_output=False,
+                    release_callback=release_pages_through,
+                )
+                if result is None:
+                    return None
+                mapped.flush()
+        temporary.replace(output)
+        return output
+    finally:
+        if temporary_fd >= 0:
+            try:
+                os.close(temporary_fd)
+            except OSError:
+                pass
+        try:
+            if temporary is not None:
+                temporary.unlink(missing_ok=True)
+        except OSError:
+            pass
+
+
+def _decrypt_cenc_fragment_buffer(
+    data,
+    source: Path,
+    output: Path,
+    keys: Iterable[object],
+    expected_kids: Iterable[str | None] | None,
+    init_path: str | Path | None,
+    default_constant_iv: bytes | None,
+    data_callback: Callable[[bytearray], None] | None,
+    init_metadata: CencInitMetadata | None,
+    *,
+    write_output: bool = True,
+    release_callback: Callable[[int], None] | None = None,
+) -> Path | None:
     has_fragment_markers = _has_fragment_cenc_markers(data)
     default_groups_by_track: dict[int, _SeigGroup] = {}
     if init_metadata is None and init_path is not None:
         init = Path(init_path)
-        init_metadata = parse_cenc_init_metadata(data if init == source else init.read_bytes(), expected_kids)
+        init_data = data if _same_file(init, source) else init.read_bytes()
+        init_metadata = parse_cenc_init_metadata(init_data, expected_kids)
     sample_entry_encrypted_by_track: dict[int, tuple[bool, ...]] = {}
     if init_metadata is not None:
         schemes = init_metadata.schemes
@@ -138,15 +277,23 @@ def decrypt_cenc_fragment(
         return None
 
     key_map, fallback_key = _fragment_key_map(keys, expected_kids)
-    result = _decrypt_fragment_data(data, key_map, fallback_key, default_groups_by_track, sample_entry_encrypted_by_track)
+    result = _decrypt_fragment_data(
+        data,
+        key_map,
+        fallback_key,
+        default_groups_by_track,
+        sample_entry_encrypted_by_track,
+        release_callback,
+    )
     if not result.changed and not result.handled_clear:
         return None
-    if result.changed:
+    if result.changed or result.handled_clear:
         _mark_fragment_encryption_boxes_clear(data)
     if data_callback:
         data_callback(data)
     output.parent.mkdir(parents=True, exist_ok=True)
-    output.write_bytes(data)
+    if write_output:
+        output.write_bytes(data)
     return output
 
 
@@ -168,15 +315,16 @@ def _decrypt_fragment_data(
     fallback_key: bytes | None,
     default_groups_by_track: dict[int, _SeigGroup] | None = None,
     sample_entry_encrypted_by_track: dict[int, tuple[bool, ...]] | None = None,
+    release_callback: Callable[[int], None] | None = None,
 ) -> _FragmentDecryptResult:
     mdat_ranges = _top_level_mdat_payload_ranges(data)
     if not mdat_ranges:
         return _FragmentDecryptResult()
     changed = False
     handled_clear = False
-    for moof_position, moof_size, _box_type, moof_header in _mp4_boxes(data):
-        if data[moof_position + 4 : moof_position + 8] != b"moof":
-            continue
+    handled_clear = False
+    moofs = [box for box in _mp4_boxes(data) if box[2] == b"moof"]
+    for moof_index, (moof_position, moof_size, _box_type, moof_header) in enumerate(moofs):
         moof_start = moof_position
         moof_end = moof_position + moof_size
         for traf_position, traf_size, box_type, traf_header in _mp4_boxes(data, moof_position + moof_header, moof_end):
@@ -197,6 +345,9 @@ def _decrypt_fragment_data(
                 changed = True
             if result.handled_clear:
                 handled_clear = True
+        if release_callback:
+            next_moof = moofs[moof_index + 1][0] if moof_index + 1 < len(moofs) else len(data)
+            release_callback(next_moof)
     return _FragmentDecryptResult(changed=changed, handled_clear=handled_clear)
 
 
@@ -268,6 +419,7 @@ def _decrypt_traf(
         senc_by_iv_size.setdefault(group.iv_size, _parse_senc(data, traf_start, traf_end, group.iv_size))
 
     changed = False
+    handled_clear = False
     sample_index = 0
     next_sample_start: int | None = None
     for trun in truns:
@@ -276,11 +428,8 @@ def _decrypt_traf(
             sample_start = _first_mdat_payload_start(mdat_ranges)
         for sample_size in trun.sample_sizes:
             if sample_index >= len(sample_groups):
-                return _FragmentDecryptResult(changed=changed)
+                return _FragmentDecryptResult(changed=changed, handled_clear=handled_clear)
             group = sample_groups[sample_index]
-            key = key_map.get(group.kid) or fallback_key
-            if key is None:
-                raise CencFragmentKeyError(group.kid)
             sample_encryptions = senc_by_iv_size.get(group.iv_size) or []
             if not sample_encryptions:
                 sample_encryptions = aux_by_iv_size.setdefault(
@@ -289,20 +438,37 @@ def _decrypt_traf(
                 )
             if sample_encryptions:
                 if sample_index >= len(sample_encryptions):
-                    return _FragmentDecryptResult(changed=changed)
+                    return _FragmentDecryptResult(changed=changed, handled_clear=handled_clear)
                 enc = sample_encryptions[sample_index]
                 if not enc.iv and group.constant_iv is not None:
                     enc = _SampleEncryption(group.constant_iv, enc.subsamples)
             elif group.constant_iv is not None:
                 enc = _SampleEncryption(group.constant_iv, ())
             else:
-                return _FragmentDecryptResult(changed=changed)
+                return _FragmentDecryptResult(changed=changed, handled_clear=handled_clear)
+            clear_only = (
+                bool(enc.subsamples)
+                and all(encrypted_size == 0 for _clear_size, encrypted_size in enc.subsamples)
+                and sum(clear_size for clear_size, _encrypted_size in enc.subsamples) == sample_size
+            )
+            if clear_only:
+                # A CENC sample may be explicitly all-clear while its track still
+                # uses an encrypted sample entry. It is handled media, not an
+                # unsupported fragment and does not need a decryption key.
+                handled_clear = True
+                sample_start += sample_size
+                next_sample_start = sample_start
+                sample_index += 1
+                continue
+            key = key_map.get(group.kid) or fallback_key
+            if key is None:
+                raise CencFragmentKeyError(group.kid)
             if _decrypt_sample(data, sample_start, sample_size, enc, key, mdat_ranges, group):
                 changed = True
             sample_start += sample_size
             next_sample_start = sample_start
             sample_index += 1
-    return _FragmentDecryptResult(changed=changed)
+    return _FragmentDecryptResult(changed=changed, handled_clear=handled_clear)
 
 
 def _decrypt_sample(
@@ -931,6 +1097,16 @@ def _fragment_key_map(keys: Iterable[object], expected_kids: Iterable[str | None
         elif raw_fallback_key is None:
             raw_fallback_key = key_bytes
     return key_map, raw_fallback_key
+
+
+def _same_file(left: Path, right: Path) -> bool:
+    """Return whether two paths address the same file without reading it."""
+    if left == right:
+        return True
+    try:
+        return left.samefile(right)
+    except OSError:
+        return False
 
 
 def _normalize_kid(value: object | None) -> str | None:

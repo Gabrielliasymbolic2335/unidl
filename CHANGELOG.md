@@ -1,0 +1,55 @@
+# Changelog
+
+## [2.0.8] - 2026-09-15
+
+This release completes the remote key-vault policy workflow and hardens the
+native delivery engine.
+
+### Remote key vaults
+
+- Added independent controls for Home-screen remote KID search, manual remote
+  key entry, post-license key storage, and pre-license remote lookup.
+- Added per-operation vault destinations for automatic lookup, acquired-key
+  storage, and explicit search.
+- Kept local lookup first and remote lookup second; complete remote hits can
+  avoid a service license request, while partial hits are merged with the
+  service response.
+- Isolated remote write failures so one unavailable destination warns and does
+  not fail a download.
+- Extended the same vault opportunity to service-owned DRM flows without
+  replacing a service's own license transport.
+
+### Vault policy and resource UI
+
+- Fixed policy controls being clipped by two-row bordered containers; all
+  Remote operations and Destinations controls remain visible in compact
+  terminals.
+- Fixed mouse selection of a remote vault changing its enabled state. Clicking
+  selects; Edit and Toggle remain separate actions.
+- Added regression coverage for policy visibility, persistence, and passive
+  remote-vault selection.
+
+### Native downloader and playback
+
+- Added bounded-memory, memory-mapped CENC decryption for large fragmented MP4
+  files.
+- Correctly handles explicitly clear CENC samples in encrypted tracks.
+- Added in-process HLS AES-128/AES-ECB decryption with the existing OpenSSL
+  fallback.
+- Preserved additional KIDs from multiple Widevine PSSH values and service
+  playback inventories before license resolution.
+- Preserved DVR metadata and the additional EC-3/5.1 audio profile mapping.
+- Kept transfer speed visible in narrow structured progress rows.
+
+### Documentation and localization
+
+- Documented the distinction between safety gates, remote operations, and
+  destinations, including local-first lookup and failure-safe multi-vault
+  writes.
+- Updated release notes in English, Simplified Chinese, Traditional Chinese,
+  Spanish, French, and Portuguese.
+
+The public package contains only the release-build changes. Runtime
+configuration, credentials, devices, databases, and internal-only service
+changes are not included.
+

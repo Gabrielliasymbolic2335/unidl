@@ -632,6 +632,8 @@ def _json_track_is_live(title: dict[str, Any]) -> bool:
 
 
 def _title_is_dvr_vod(title: dict[str, Any]) -> bool:
+    if bool(title.get("dvr")):
+        return True
     source = _str_or_none(title.get("source") or title.get("playback_source") or title.get("playbackSource"))
     return bool(source and source.lower() == "dvr")
 
@@ -890,7 +892,11 @@ def _title_meta(title: dict[str, Any]) -> dict[str, Any]:
         "episode_name": episode_name,
         "duration_seconds": duration,
         "original_language": _str_or_none(title.get("original_language") or title.get("originalLanguage")),
-        "title_source": _str_or_none(title.get("source") or title.get("playback_source") or title.get("playbackSource")),
+        "title_source": (
+            "dvr"
+            if _title_is_dvr_vod(title)
+            else _str_or_none(title.get("source") or title.get("playback_source") or title.get("playbackSource"))
+        ),
         "hls_manifest_url": hls_manifest_url,
         "source": "json",
     }
