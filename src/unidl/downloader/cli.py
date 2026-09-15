@@ -8749,6 +8749,15 @@ def _hydrate_stream(stream, headers: dict[str, str], no_probe: bool, base_url: s
     if not detail_streams:
         return stream
     detail = detail_streams[0]
+    # Keep metadata supplied by a lazy third-party export when the selected HLS
+    # playlist omits it (notably exported KID inventories and JOC/Atmos flags).
+    lazy_metadata = {}
+    if stream.extra.get("_unidl_lazy_hls"):
+        lazy_metadata = {
+            key: stream.extra.get(key)
+            for key in ("_unidl_lazy_hls", "key_id", "key_ids", "audio_atmos", "channels_raw")
+            if stream.extra.get(key) not in (None, "", [])
+        }
     stream.segments = detail.segments
     stream.duration = detail.duration
     stream.extension = detail.extension or stream.extension
@@ -8760,6 +8769,7 @@ def _hydrate_stream(stream, headers: dict[str, str], no_probe: bool, base_url: s
         stream.encryption_scheme = detail.encryption_scheme or stream.encryption_scheme
     stream.is_live = detail.is_live
     stream.extra.update(detail.extra or {})
+    stream.extra.update(lazy_metadata)
     _filter_hls_segments_for_requested_asset(stream)
     return stream
 

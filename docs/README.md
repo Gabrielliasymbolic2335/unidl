@@ -17,6 +17,8 @@ and extending the project.
 - [Changelog](../CHANGELOG.md) — public release notes.
 - [Native downloader](downloader-integration.md) — manifest inputs and delivery
   integration.
+- [Third-party exports](third-party-exports.md) — Unshackle and other non-UniDL
+  export files delivered through the generic downloader.
 - [Testing](testing.md) — offline checks, live checks and regression practice.
 
 ## Playback and delivery

@@ -30,11 +30,13 @@ import signal
 import subprocess
 import sys
 import time
+from dataclasses import replace
 from pathlib import Path
 
 from textual.app import App
 
 from ..core import i18n, playready, service_catalog, vaults
+from ..core.brands import service_tag
 from ..core.config import Config, default_config_path
 from ..core.credentials import mask_in
 from ..core.devreload import ReloadError, ReloadResult, ServiceReloader
@@ -69,9 +71,19 @@ _SERVICE_ID = re.compile(r"[a-z0-9][a-z0-9_-]*")
 
 
 def _portable_import_service_class(document) -> type[Service]:
-    """Build a network-free Service-shaped context for one portable export."""
+    """A network-free Service-shaped context for one portable export.
+
+    Session and Engine consume a small Service contract for settings, naming and
+    lifecycle hooks. An import must not turn that implementation detail into an
+    installation, account, helper or licence dependency, so this class keeps only
+    inert identity metadata from the document and inherits Core's no-op hooks.
+    """
     raw_id = str(getattr(document, "service", "") or "").strip().lower()
-    source_id = raw_id if _SERVICE_ID.fullmatch(raw_id) else "portable-import"
+    source_id = raw_id
+    if not _SERVICE_ID.fullmatch(source_id):
+        source_id = "portable-import"
+    third_party = not getattr(document, "is_native", True)
+    context_id = "third-party-import" if third_party else source_id
     source_name = str(getattr(document, "service_name", "") or raw_id or "Portable import")
     has_live = any(bool(getattr(entry, "is_live", False)) for entry in document.entries)
 
@@ -80,8 +92,9 @@ def _portable_import_service_class(document) -> type[Service]:
         drm = getattr(playback, "drm", None)
         inventory = getattr(drm, "context", {}).get("license_tracks") if drm is not None else None
         if inventory is not None and not inventory:
-            # Version-1 exports originally did not persist DrmInfo.clear. The
-            # parsed ladder remains authoritative when it has no encrypted track.
+            # Older version-1 exports did not persist DrmInfo.clear. The parsed
+            # ladder is authoritative on replay: if it has no encrypted tracks,
+            # there is nothing for a KID:key to unlock.
             return []
         raise CdmError(
             "This import declares licence-bound DRM but contains no usable KID:key. "
@@ -90,19 +103,42 @@ def _portable_import_service_class(document) -> type[Service]:
             "or licence request was attempted; create a complete export again."
         )
 
+    def exported_manifest_variants(self, playback, log):
+        """Expose already-authorized export URLs without contacting a service."""
+        del self, log
+        return [
+            replace(
+                playback,
+                manifest_url=url,
+                json_manifest=None,
+                alternate_manifest_urls=(),
+                merge_manifests=False,
+            )
+            for url in playback.alternate_manifest_urls
+            if str(url).strip()
+        ]
+
     return type(
         "PortableImportService",
         (Service,),
         {
             "__module__": __name__,
-            "ID": source_id,
+            # Foreign data gets a dedicated state namespace.  Using its source
+            # service ID here would make Registry.build point at that service's
+            # token/settings directories even though no service class is loaded.
+            "ID": context_id,
             "NAME": source_name,
+            "TAG": service_tag(raw_id),
             "USES": Capabilities().with_self("drm"),
             "SUPPORTS_URL": False,
             "SUPPORTS_SEARCH": False,
             "SUPPORTS_LIVE": has_live,
             "_PORTABLE_IMPORT_FALLBACK": True,
+            "_THIRD_PARTY_IMPORT": third_party,
+            "_NO_LICENSE_IMPORT": third_party,
+            "_EXPORT_SOURCE_ID": source_id,
             "get_keys": missing_keys,
+            "manifest_variants": exported_manifest_variants,
         },
     )
 
@@ -460,13 +496,18 @@ class UnidlApp(App):
     def open_import(self, document) -> bool:
         """Finish what an export file already resolved. Returns whether it started.
 
-        Prefer the installed service so its custom preparation, key formatting,
-        sidecars and lifecycle hooks remain active. If no service ID matches, use
-        a generic context for ordinary portable delivery without source code.
+        A native UniDL export may retain an installed platform's custom delivery
+        hooks. A third-party export always uses the inert generic context: matching
+        its source label to an installed service must never load that service's
+        account, cookies, tokens or licence transport.
         """
         from .session import SessionController
 
-        installed = self.registry.for_id(document.service)
+        installed = (
+            self.registry.for_id(document.service)
+            if getattr(document, "is_native", True)
+            else None
+        )
         service_cls = installed or _portable_import_service_class(document)
         service = self.registry.build(
             service_cls, self.config, self.settings_store, globals_scope=self.globals

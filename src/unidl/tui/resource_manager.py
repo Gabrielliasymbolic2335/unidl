@@ -446,8 +446,15 @@ class _RemoteVaultEditor(ModalScreen[dict[str, Any] | None]):
 
     def action_save(self) -> None:
         name = self._field("#resource-name")
-        address = self._field("#resource-address").rstrip("/")
         kind = str(self.query_one("#resource-vault-type", Select).value)
+        # Keep the URL exactly as entered for HTTP vaults.  Some servers (the
+        # DRMLab endpoint is one) route ``/vault`` and ``/vault/`` differently;
+        # stripping the slash turns a valid JSON endpoint into HTTP 405.  The
+        # legacy path-style API normalises its URI in ApiVault, so retain its
+        # previous slash-insensitive behaviour there.
+        address = self._field("#resource-address")
+        if kind == "api":
+            address = address.rstrip("/")
         mode = str(self.query_one("#resource-api-mode", Select).value)
         secret = self._field("#resource-secret")
         if not _NAME_RE.match(name):

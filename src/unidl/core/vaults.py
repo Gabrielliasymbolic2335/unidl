@@ -288,6 +288,10 @@ class HttpVault:
 
     # ------------------------------------------------------------------ read
     def get_keys(self, kids: Iterable[str], service: str | None = None) -> dict[str, str]:
+        # ``supported_services`` is a search capability declaration, not an
+        # automatic lookup allow-list.  A playback request already carries the
+        # exact service namespace and must be sent to the vault just like
+        # unshackle's HTTP backend does.
         tag = self._service_tag(service)
         if tag is None:
             return {}
@@ -330,7 +334,7 @@ class HttpVault:
                 if kid
             )
         )
-        requested = self._service_tag(service) if service else None
+        requested = self._search_service_tag(service) if service else None
         if service and requested is None:
             return []
         services = (requested,) if requested else self.supported_services
@@ -368,8 +372,17 @@ class HttpVault:
 
     def _service_tag(self, service: str | None) -> str | None:
         raw = str(service or "").strip().lower()
-        tag = self.service_map.get(raw, raw)
-        if self.supported_services and tag not in self.supported_services:
+        return self.service_map.get(raw, raw) or None
+
+    def _search_service_tag(self, service: str | None) -> str | None:
+        """Map a service for explicit remote search, enforcing its scope.
+
+        Unlike automatic key lookup and storage, home-screen search has no
+        server-side service context unless the user explicitly narrows it.  It
+        therefore may only query the finite ``supported_services`` declaration.
+        """
+        tag = self._service_tag(service)
+        if tag is None or (self.supported_services and tag not in self.supported_services):
             return None
         return tag
 

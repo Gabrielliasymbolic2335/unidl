@@ -91,6 +91,20 @@ supports enable/disable, read/write policy, service filters and manual KID:key
 entry. The TUI can edit these resources without hand-editing YAML. Keep vault
 tokens and keys private.
 
+For HTTP vaults, keep any operator-required trailing slash in the endpoint URL;
+some routers distinguish `/vault` from `/vault/`. A `supported_services` list is
+an explicit capability declaration for home-screen remote search. Automatic
+lookup and storage use the active service ID directly, while `service_map` aliases
+are applied to explicit searches.
+
+## Service-specific quality settings
+
+MGM+ keeps manifest resolution (`720`, `1080`, or `2160`) separate from its
+independent `CBCS`/`CENC` choice. Amazon VOD keeps its ApplePlayer 4K request
+profile and `CBR`/`CVBR` bitrate adaptation choice separate as well. The shared
+`video_quality` setting is applied only after a returned manifest is parsed; it
+does not choose which manifest profile a service requests.
+
 ## Credentials and cookies
 
 Credential slots are declared by the service. Values live under that service's

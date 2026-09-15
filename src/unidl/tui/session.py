@@ -1674,7 +1674,12 @@ class SessionController:
             f"{f' made by {document.app}' if document.app else ''}"
             f"{f', {document.created}' if document.created else ''}"
         )
-        if getattr(self.service, "_PORTABLE_IMPORT_FALLBACK", False):
+        if getattr(self.service, "_THIRD_PARTY_IMPORT", False):
+            ctx.log(
+                "third-party import: using generic delivery only; source service "
+                "sessions and licence transports are disabled"
+            )
+        elif getattr(self.service, "_PORTABLE_IMPORT_FALLBACK", False):
             ctx.log(
                 "portable import: source service is not installed; using generic delivery "
                 "with the manifest, headers and any content keys from the file"
@@ -1688,9 +1693,14 @@ class SessionController:
             if entry.summary:
                 ctx.log(f"exported as: {entry.summary}")
             playback = entry.playback()
-            # Legacy export IDs are only a lookup key. Use the matched service's
-            # canonical namespace for settings, output paths and sidecars.
-            playback.title.service = self.service.ID
+            # Use the installed service's canonical namespace for output paths,
+            # settings and any artefacts written during import. The document may
+            # legitimately carry an older ID which was needed only to find this
+            # service (for example Peacock's former ``pcock`` namespace).
+            playback.title.service = str(
+                getattr(self.service, "_EXPORT_SOURCE_ID", self.service.ID)
+                or self.service.ID
+            )
             yield ctx.emit(playback)
 
     def _deep_link(self, ctx: FlowContext, entry, argument: str):

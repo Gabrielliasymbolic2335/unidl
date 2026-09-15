@@ -109,7 +109,7 @@
   "update.note.media_types": "保留 DVR 元数据和更多音频 profile；多 PSSH 与 service-owned 播放流程也会在 license 前发现完整 KID 集合。",
   "update.note.documentation": "Vault policy 文档现在明确说明安全门、远程操作开关和逐项目标，包括本地优先查询、部分命中合并以及多 vault 写入失败隔离。",
   "update.note.clipboard": "Vault policy 界面在紧凑终端中也会显示全部操作和目标控件；点击远程 vault 只会选中，不会改变启用状态，Toggle 仍是明确的启停操作。",
-  "update.note.update_checker": "UniDL v2.0.8 加入完整的远程 key vault policy 流程，并为发行版补充回归测试。",
+  "update.note.update_checker": "UniDL v2.0.9 新增第三方 export 通用导入、延迟 HLS track 解析，并加强 replay 时的 service/session 隔离。",
   "update.close_hint": "按 esc / x 关闭窗口",
   "home.chip.config": "配置",
   "home.chip.config_create": "创建",

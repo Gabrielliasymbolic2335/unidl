@@ -48,24 +48,33 @@ def _parse_title(
 ) -> list[StreamInfo]:
     streams: list[StreamInfo] = []
     title_meta = _title_meta(title)
+    # Third-party exports already contain the complete rendition metadata. Do
+    # not fetch every exported HLS child playlist while opening the track picker;
+    # selected streams are hydrated by the download path later. Native service
+    # JSON manifests never carry this private marker and remain eager.
+    lazy_hls = _bool(title.get("_unidl_lazy_hls"))
     for item in _track_items(title, "video_tracks", "videos", "video"):
-        nested = _nested_hls_streams(uri, item, "video", title_meta, headers)
+        nested = None if lazy_hls else _nested_hls_streams(uri, item, "video", title_meta, headers)
         if nested is not None:
             streams.extend(nested)
             continue
-        stream = _video_stream(uri, title, item, title_meta)
+        stream = _lazy_hls_stream(uri, title, item, "video", title_meta) if lazy_hls else _video_stream(uri, title, item, title_meta)
         if stream:
             streams.append(stream)
     for item in _track_items(title, "audio_tracks", "audios", "audio"):
-        nested = _nested_hls_streams(uri, item, "audio", title_meta, headers)
+        nested = None if lazy_hls else _nested_hls_streams(uri, item, "audio", title_meta, headers)
         if nested is not None:
             streams.extend(nested)
             continue
-        stream = _audio_stream(uri, title, item, title_meta)
+        stream = _lazy_hls_stream(uri, title, item, "audio", title_meta) if lazy_hls else _audio_stream(uri, title, item, title_meta)
         if stream:
             streams.append(stream)
     for item in _track_items(title, "subtitle_tracks", "subtitles", "text_tracks", "texts"):
-        stream = _subtitle_stream(uri, title, item, title_meta)
+        nested = None if lazy_hls else _nested_hls_streams(uri, item, "subtitle", title_meta, headers)
+        if nested is not None:
+            streams.extend(nested)
+            continue
+        stream = _lazy_hls_stream(uri, title, item, "subtitle", title_meta) if lazy_hls else _subtitle_stream(uri, title, item, title_meta)
         if stream:
             streams.append(stream)
     if any(stream.media_type == "audio" for stream in streams):
@@ -74,6 +83,43 @@ def _parse_title(
                 stream.extra["muxed_audio"] = False
     streams.extend(parse_sabr_ump_streams(uri, title, title_meta, existing_streams=streams))
     return streams
+
+
+def _lazy_hls_stream(
+    uri: str,
+    title: dict[str, Any],
+    item: dict[str, Any],
+    media_type: str,
+    title_meta: dict[str, Any],
+) -> StreamInfo | None:
+    """Build an HLS placeholder from export metadata without network I/O."""
+    manifest_url = _str_or_none(item.get("manifest_url") or item.get("manifestUrl"))
+    if not manifest_url:
+        constructors = {"video": _video_stream, "audio": _audio_stream, "subtitle": _subtitle_stream}
+        constructor = constructors.get(media_type)
+        return constructor(uri, title, item, title_meta) if constructor else None
+    url = join_uri(uri, manifest_url)
+    item_with_url = dict(item)
+    item_with_url["url"] = url
+    constructors = {"video": _video_stream, "audio": _audio_stream, "subtitle": _subtitle_stream}
+    constructor = constructors.get(media_type)
+    if constructor is None:
+        return None
+    stream = constructor(uri, title, item_with_url, title_meta)
+    if stream is None:
+        return None
+    stream.manifest_type = "hls"
+    stream.url = url
+    # The constructor uses one synthetic direct segment when no explicit segment
+    # list is supplied. Remove it so the existing hydration path knows this is a
+    # deferred playlist and does not mistake the manifest URL for media bytes.
+    if not item.get("segments"):
+        stream.segments = []
+    stream.extra["source"] = "json"
+    stream.extra["_unidl_lazy_hls"] = True
+    if media_type == "audio" and _item_audio_atmos(item):
+        stream.extra["audio_atmos"] = 1
+    return stream
 
 
 def _nested_hls_streams(
@@ -105,7 +151,24 @@ def _nested_hls_streams(
         nested[0].media_type = media_type
         expected = nested
     for stream in expected:
-        stream.extra = {**title_meta, **(stream.extra or {}), "source": "json"}
+        item_extra = _extra(title_meta, item)
+        nested_extra = stream.extra or {}
+        stream.extra = {**item_extra, **nested_extra, "source": "json"}
+        # HLS media playlists may not declare the same KID inventory carried by
+        # the portable JSON wrapper. Retain both inventories instead of letting
+        # an empty parser result erase the exported KIDs.
+        key_ids: list[str] = []
+        for value in (
+            *(nested_extra.get("key_ids") or []),
+            nested_extra.get("key_id"),
+            *(item_extra.get("key_ids") or []),
+            item_extra.get("key_id"),
+        ):
+            if (key_id := _normalize_kid(value)) and key_id not in key_ids:
+                key_ids.append(key_id)
+        if key_ids:
+            stream.extra["key_ids"] = key_ids
+            stream.extra["key_id"] = key_ids[0]
         if not stream.id:
             stream.id = _track_id(item)
         if media_type == "video":
@@ -117,6 +180,15 @@ def _nested_hls_streams(
             stream.language = stream.language or _language(item)
             stream.channels = stream.channels or _str_or_none(item.get("channels"))
             stream.codecs = stream.codecs or _str_or_none(item.get("codec") or item.get("codecs"))
+            if _item_audio_atmos(item):
+                stream.extra["audio_atmos"] = 1
+        elif media_type == "subtitle":
+            stream.language = stream.language or _language(item)
+            stream.name = _str_or_none(item.get("name")) or stream.name
+            stream.codecs = stream.codecs or _str_or_none(
+                item.get("codec") or item.get("codecs") or item.get("format")
+            )
+            stream.role = _subtitle_role(item) or stream.role
     return expected
 
 
@@ -916,6 +988,24 @@ def _extra(title_meta: dict[str, Any], item: dict[str, Any], *, dvr_sequence: di
     raw = _compact_raw(item)
     if raw:
         extra["raw"] = raw
+    # Portable JSON tracks commonly carry the KID beside ``encrypted``. Keep
+    # that declaration in the same ``extra`` fields used by native DASH/HLS
+    # parsers, otherwise Engine's license inventory (and vault lookup) sees an
+    # encrypted stream with no key id at all.
+    key_ids = item.get("key_ids") or item.get("keyIds")
+    if isinstance(key_ids, (list, tuple)):
+        normalized = [
+            kid
+            for value in key_ids
+            if (kid := _normalize_kid(value))
+        ]
+        if normalized:
+            extra["key_ids"] = list(dict.fromkeys(normalized))
+            extra["key_id"] = extra["key_ids"][0]
+    key_id = _normalize_kid(item.get("kid") or item.get("key_id") or item.get("keyId"))
+    if key_id:
+        extra.setdefault("key_id", key_id)
+        extra.setdefault("key_ids", [key_id])
     return extra
 
 
@@ -969,6 +1059,23 @@ def _audio_role(item: dict[str, Any]) -> str | None:
     if _bool(item.get("is_default") or item.get("isDefault") or item.get("default")):
         return "Default"
     return None
+
+
+def _item_audio_atmos(item: dict[str, Any]) -> bool:
+    """Recognize Atmos/JOC declarations carried by portable JSON metadata."""
+    for key in ("audio_atmos", "atmos", "joc"):
+        value = item.get(key)
+        if isinstance(value, str):
+            if value.strip().casefold() in {"", "0", "false", "no", "off", "none"}:
+                continue
+            return True
+        if value:
+            return True
+    text = " ".join(
+        str(item.get(key) or "")
+        for key in ("codec", "codecs", "name", "role", "profile", "format")
+    ).casefold()
+    return any(token in text for token in ("atmos", "joc", "ec3-joc"))
 
 
 def _audio_descriptor(item: dict[str, Any]) -> str | None:

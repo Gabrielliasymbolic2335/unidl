@@ -151,7 +151,7 @@
   "update.note.media_types": "Se conservan los metadatos DVR y perfiles de audio adicionales; las búsquedas de bóveda también descubren todos los KID de PSSH múltiples antes de solicitar la licencia.",
   "update.note.documentation": "La documentación de Vault policy explica las puertas de seguridad, las operaciones y los destinos independientes, incluida la búsqueda local primero y la combinación de resultados parciales.",
   "update.note.clipboard": "La interfaz de Vault policy mantiene visibles todos los controles incluso en terminales compactos; seleccionar una bóveda remota ya no cambia su estado y Toggle sigue siendo explícito.",
-  "update.note.update_checker": "UniDL v2.0.8 incorpora el flujo completo de políticas de bóvedas remotas y sus pruebas de regresión en la versión pública.",
+  "update.note.update_checker": "UniDL v2.0.9 añade importación genérica de exportaciones de terceros, hidratación HLS diferida y un aislamiento más seguro de servicios y sesiones.",
   "update.close_hint": "esc / x cierra esta ventana",
   "home.chip.config": "configuración",
   "home.chip.config_create": "crear",

@@ -169,6 +169,12 @@ class Entry:
     save_name: str = ""
     title: Title | None = None
     manifest_url: str = ""
+    #: Additional already-authorized manifests belonging to the same exported
+    #: title. Third-party exporters commonly store one DASH/ISM URL per codec or
+    #: range. They are parsed and merged by the generic import context; they are
+    #: never handed to an installed service for re-authorization.
+    alternate_manifest_urls: tuple[str, ...] = ()
+    merge_manifests: bool = False
     manifest_base_url: str = ""
     json_manifest: dict[str, Any] | None = None
     headers: dict[str, str] = field(default_factory=dict)
@@ -244,6 +250,8 @@ class Entry:
             title=title,
             save_name=self.save_name,
             manifest_url=self.manifest_url or None,
+            alternate_manifest_urls=tuple(self.alternate_manifest_urls),
+            merge_manifests=self.merge_manifests,
             manifest_base_url=self.manifest_base_url or None,
             json_manifest=self.json_manifest,
             headers=dict(self.headers),
@@ -265,6 +273,10 @@ class Entry:
         }
         if self.manifest_url:
             document["manifest_url"] = self.manifest_url
+        if self.alternate_manifest_urls:
+            document["alternate_manifest_urls"] = list(self.alternate_manifest_urls)
+        if self.merge_manifests:
+            document["merge_manifests"] = True
         if self.manifest_base_url:
             document["manifest_base_url"] = self.manifest_base_url
         if self.json_manifest is not None and _json_safe(self.json_manifest):
@@ -332,6 +344,12 @@ def _entry_from(document: dict[str, Any]) -> Entry:
         save_name=_text(document.get("save_name")),
         title=_title_from(document.get("title") or {}),
         manifest_url=manifest,
+        alternate_manifest_urls=tuple(
+            str(url)
+            for url in (document.get("alternate_manifest_urls") or [])
+            if str(url).strip()
+        ),
+        merge_manifests=bool(document.get("merge_manifests")),
         manifest_base_url=_text(document.get("manifest_base_url")),
         json_manifest=json_manifest if isinstance(json_manifest, dict) else None,
         headers={str(k): str(v) for k, v in (document.get("headers") or {}).items()},
@@ -363,6 +381,14 @@ class Document:
     created: str = ""
     app: str = ""
     entries: list[Entry] = field(default_factory=list)
+    #: Parser identity used only while importing. Native documents keep KIND;
+    #: adapters set their own value so the UI can force the generic downloader
+    #: even when the source service happens to be installed.
+    source_format: str = KIND
+
+    @property
+    def is_native(self) -> bool:
+        return self.source_format == KIND
 
     @property
     def keys(self) -> int:
@@ -472,7 +498,12 @@ def loads(text: str) -> Document:
     if not isinstance(raw, dict):
         raise ExportError("not an export: the file does not describe one")
     if _text(raw.get("kind")) != KIND:
-        raise ExportError("not a unidl export")
+        # Keep foreign schemas outside this module. A converter returns the same
+        # neutral Document model consumed by the TUI and native downloader, while
+        # source_format prevents an installed service from being entered.
+        from .third_party_exports import load as load_third_party
+
+        return load_third_party(raw)
     version = raw.get("version")
     if version != VERSION:
         raise ExportError(

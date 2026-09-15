@@ -1,5 +1,30 @@
 # Changelog
 
+## [2.0.9] - 2026-09-15
+
+This release adds safe generic imports for third-party exports while preserving
+the service-owned licensing boundary.
+
+### Third-party exports
+
+- Added Unshackle v2 and legacy track/series export adapters under
+  `core/third_party_exports.py`.
+- Third-party imports always use the generic delivery path; source service
+  sessions, cookies, helpers and licence transports are never loaded.
+- Preserved exported alternate manifests, KID:key pairs, chapters and direct
+  sidecars without re-authorizing them.
+- Added lazy HLS child-playlist hydration so large subtitle inventories open
+  promptly and only selected playlists are fetched during download.
+- Normalized EC3/Atmos metadata without changing native service JSON-manifest
+  parsing.
+
+### Documentation and maintenance
+
+- Documented the third-party export boundary and generic-delivery workflow.
+- Kept remote vault lookup/store/search operation gates and destination policy
+  explicit and independent.
+- Updated all supported interface locales and the release version to 2.0.9.
+
 ## [2.0.8] - 2026-09-15
 
 This release completes the remote key-vault policy workflow and hardens the
@@ -52,4 +77,3 @@ native delivery engine.
 The public package contains only the release-build changes. Runtime
 configuration, credentials, devices, databases, and internal-only service
 changes are not included.
-

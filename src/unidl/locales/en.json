@@ -109,7 +109,7 @@
   "update.note.media_types": "DVR metadata and additional audio profiles are preserved, while vault lookups can discover all KIDs in multi-PSSH and service-owned playback inventories before licensing.",
   "update.note.documentation": "Vault policy documentation now explains safety gates, operation switches and per-operation destinations, including local-first lookup, partial-hit merging and failure-safe multi-vault writes.",
   "update.note.clipboard": "The Vault policy UI now keeps every operation and destination control visible in compact terminals; selecting a remote vault never changes its enabled state, while Toggle remains explicit.",
-  "update.note.update_checker": "UniDL v2.0.8 adds the complete remote-vault policy workflow and its regression coverage across the release build.",
+  "update.note.update_checker": "UniDL v2.0.9 adds generic third-party export imports, lazy HLS track hydration, and safer service/session isolation during replay.",
   "update.close_hint": "esc / x closes this window",
   "home.chip.config": "config",
   "home.chip.config_create": "create",

@@ -1924,7 +1924,26 @@ class Engine:
                 origins={id(stream): playback for stream in streams},
             )
 
+        # A third-party export may combine a typed JSON source (resolved HLS
+        # tracks/direct sidecars) with additional DASH/ISM manifests. Keep the
+        # JSON source as a real first variant; ``_parse_playback_manifest``
+        # otherwise sees the alternate URL list and would silently discard the
+        # exported subtitles/audio tracks while merging only the manifests.
         variants = [playback]
+        if (
+            service is not None
+            and getattr(service, "_THIRD_PARTY_IMPORT", False)
+            and playback.json_manifest is not None
+            and not playback.manifest_url
+            and playback.alternate_manifest_urls
+        ):
+            variants = [
+                replace(
+                    playback,
+                    alternate_manifest_urls=(),
+                    merge_manifests=False,
+                )
+            ]
         if service is not None:
             provided = service.manifest_variants(playback, self.log) or []
             variants.extend(item for item in provided if isinstance(item, Playback))

@@ -109,7 +109,7 @@
   "update.note.media_types": "Metadados DVR e perfis de áudio adicionais são preservados; consultas ao cofre também descobrem todos os KIDs de PSSH múltiplos antes da licença.",
   "update.note.documentation": "A documentação de Vault policy explica os gates de segurança, as operações e os destinos independentes, incluindo consulta local primeiro e mesclagem de resultados parciais.",
   "update.note.clipboard": "A interface de Vault policy mantém todos os controles visíveis em terminais compactos; selecionar um cofre remoto não altera mais seu estado e Toggle continua explícito.",
-  "update.note.update_checker": "O UniDL v2.0.8 adiciona o fluxo completo de políticas de cofres remotos e sua cobertura de regressão na versão pública.",
+  "update.note.update_checker": "O UniDL v2.0.9 adiciona importação genérica de exports de terceiros, hidratação HLS adiada e isolamento mais seguro de serviços e sessões.",
   "update.close_hint": "esc / x fecha esta janela",
   "home.chip.config": "configuração",
   "home.chip.config_create": "criar",

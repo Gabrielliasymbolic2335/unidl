@@ -109,7 +109,7 @@
   "update.note.media_types": "Les métadonnées DVR et les profils audio supplémentaires sont conservés ; les recherches de coffre découvrent aussi tous les KID des PSSH multiples avant la licence.",
   "update.note.documentation": "La documentation de Vault policy décrit les portes de sécurité, les opérations et les destinations indépendantes, notamment la recherche locale prioritaire et la fusion des résultats partiels.",
   "update.note.clipboard": "L’interface Vault policy garde tous les contrôles visibles dans les terminaux compacts ; sélectionner un coffre distant ne change plus son état et Toggle reste explicite.",
-  "update.note.update_checker": "UniDL v2.0.8 ajoute le workflow complet des politiques de coffres distants et sa couverture de régression dans la version publique.",
+  "update.note.update_checker": "UniDL v2.0.9 ajoute l’import générique des exports tiers, l’hydratation HLS différée et un isolement plus sûr des services et sessions.",
   "update.close_hint": "esc / x ferme cette fenêtre",
   "home.chip.config": "configuration",
   "home.chip.config_create": "créer",
