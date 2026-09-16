@@ -1,5 +1,29 @@
 # Changelog
 
+## [2.1.0] - 2026-09-16
+
+### Per-service export policy
+
+- Added **Settings → Services → Export manifest type** for every registered
+  service, with the existing refreshable master manifest kept as the default.
+- Added **All media manifests** export for short-lived master URLs. It stores the
+  complete parsed video, audio and subtitle inventory instead of only the tracks
+  selected for the current run.
+- Preserved portable HLS, DASH and ISM delivery details, including segment URLs,
+  byte ranges, encryption metadata, inline initialization data, timelines and
+  discontinuities.
+- Kept live exports on their refreshable master manifest instead of freezing an
+  incomplete static snapshot.
+
+### Import and documentation
+
+- Native imports now always enter download delivery and no longer inherit the
+  service-only **after picking → save an export file** action.
+- Media-manifest imports restore their saved track semantics without reopening
+  an expired master manifest or hydrating HLS child playlists.
+- Documented the separate boundaries between provider manifest profiles, final
+  track selection and export representation.
+
 ## [2.0.9] - 2026-09-15
 
 This release adds safe generic imports for third-party exports while preserving

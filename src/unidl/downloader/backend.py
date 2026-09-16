@@ -7,6 +7,7 @@ runtime dependency on the former standalone downloader application.
 
 from __future__ import annotations
 
+import base64
 import hashlib
 import json
 import threading
@@ -268,6 +269,67 @@ class NativeDownloaderBackend:
         )
         return self.adopt(request, merged_streams)
 
+    def export_media_manifest(self, manifest: ParsedManifest) -> dict[str, object]:
+        """Snapshot every parsed media track into UniDL's portable JSON dialect.
+
+        HLS media playlists that the picker left lazy are hydrated here. DASH
+        and Smooth Streaming already carry their representation segment lists,
+        so all three adaptive formats cross the same inert JSON boundary on
+        import without asking for the original master manifest again.
+        """
+        request = manifest.request
+        policy = request.policy
+        streams = api.hydrate_streams(
+            api.ParseOptions(
+                input=self._materialize(request),
+                headers=dict(policy.headers),
+                proxy=policy.proxy,
+                use_system_proxy=policy.use_system_proxy,
+                details=True,
+                no_child_playlists=False,
+                no_probe=policy.no_probe,
+                base_url=policy.base_url,
+                append_url_params=policy.append_url_params,
+                ad_keywords=list(policy.ad_keywords),
+                drop_video=policy.drop_video,
+                drop_audio=policy.drop_audio,
+                drop_subtitle=policy.drop_subtitle,
+            ),
+            self.streams(manifest),
+        )
+        if any(stream.is_live for stream in streams):
+            raise ValueError(
+                "a live manifest cannot be frozen as a finite media-track snapshot"
+            )
+        return self._json_manifest(streams, media_snapshot=True)
+
+    def _json_manifest(
+        self,
+        streams: Sequence[StreamInfo],
+        *,
+        media_snapshot: bool = False,
+    ) -> dict[str, object]:
+        document: dict[str, object] = {
+            "video_tracks": [],
+            "audio_tracks": [],
+            "subtitle_tracks": [],
+        }
+        if media_snapshot:
+            # Private marker: generic JSON inputs retain their long-standing
+            # behaviour, while a native export can restore HLS/DASH/ISM stream
+            # semantics and every explicit segment field exactly.
+            document["_unidl_media_manifest"] = 1
+        buckets = {
+            "video": document["video_tracks"],
+            "audio": document["audio_tracks"],
+            "subtitle": document["subtitle_tracks"],
+        }
+        for stream in streams:
+            bucket = buckets.get(str(stream.media_type or "").lower())
+            if isinstance(bucket, list):
+                bucket.append(self._json_track(stream))
+        return document
+
     @staticmethod
     def _timeline_stream_key(stream: StreamInfo) -> tuple[object, ...]:
         return (
@@ -374,6 +436,7 @@ class NativeDownloaderBackend:
         """Represent one native stream in the parser's portable JSON dialect."""
         record: dict[str, object] = {
             "url": stream.url,
+            "manifest_type": stream.manifest_type,
             "id": stream.id,
             "group_id": stream.group_id,
             "name": stream.name,
@@ -395,26 +458,42 @@ class NativeDownloaderBackend:
         kids = api.stream_key_ids(stream)
         if kids:
             record["kid"] = kids[0]
+            record["key_ids"] = list(kids)
         if stream.segments:
             record["segments"] = [
-                {
+                {key: value for key, value in {
                     "url": segment.url,
                     "duration": segment.duration,
                     "index": segment.index,
-                    "range": (
-                        f"{segment.byte_range[0]}-{segment.byte_range[1]}"
-                        if segment.byte_range
+                    "byte_range": list(segment.byte_range) if segment.byte_range else None,
+                    "allow_range_status_200": segment.allow_range_status_200,
+                    "data_base64": (
+                        base64.b64encode(segment.data).decode("ascii")
+                        if segment.data is not None
                         else None
                     ),
                     "encrypted": segment.encrypted,
                     "encryption_scheme": segment.encryption_scheme,
                     "kid": segment.key_id,
-                }
+                    "key_uri": segment.key_uri,
+                    "key_iv": segment.key_iv.hex() if segment.key_iv else None,
+                    "program_date_time": segment.program_date_time,
+                    "gap": segment.gap,
+                    "discontinuity_after": segment.discontinuity_after,
+                    "timeline_time": segment.timeline_time,
+                    "timeline_presentation_time": segment.timeline_presentation_time,
+                }.items() if value is not None and value is not False}
                 for segment in stream.segments
             ]
         # Only retain flags consumed by the native formatter; arbitrary service
         # metadata can contain non-JSON objects and is not needed to download.
-        for key in ("audio_atmos", "muxed_audio", "dash_full_base_url_mode"):
+        for key in (
+            "audio_atmos",
+            "muxed_audio",
+            "dash_full_base_url_mode",
+            "media_sequence",
+            "target_duration",
+        ):
             if key in stream.extra:
                 record[key] = stream.extra[key]
         raw = stream.extra.get("raw")

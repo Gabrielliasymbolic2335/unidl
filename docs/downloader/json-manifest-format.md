@@ -172,8 +172,18 @@ Segment fields:
 - `duration`
 - `byte_range`, `byteRange`, or `range`; accepted forms are `[start, end]`, `{"start": 0, "end": 999}`, or `"0-999"`
 - `encrypted`, `encryption_scheme`, `kid`
+- `key_uri`, `key_iv` for HLS media encryption (`key_iv` is hexadecimal)
+- `data_base64` for a generated/inline init segment, including Smooth Streaming init data
+- `allow_range_status_200`
+- `program_date_time`, `gap`, `discontinuity_after`
+- `timeline_time`, `timeline_presentation_time`
 
 Relative segment URLs are resolved against the track URL.
+
+UniDL native **all media manifests** exports use the private
+`_unidl_media_manifest: 1` root marker and a per-track `manifest_type` field to
+restore the exact HLS, DASH or ISM segment semantics. Other JSON manifests do not
+need this marker and retain the generic JSON/direct behavior described above.
 
 ## SegmentBase / Single Direct File Hints
 

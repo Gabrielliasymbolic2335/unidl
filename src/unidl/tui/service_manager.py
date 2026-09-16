@@ -11,7 +11,7 @@ from textual.screen import ModalScreen, Screen
 from textual.widgets import Label, OptionList, Static
 from textual.widgets.option_list import Option
 
-from ..core import service_catalog
+from ..core import exports, service_catalog
 from ..core.i18n import setting_value, tr
 from ..core.settings import Option as SettingOption
 from ..core.settings import Setting, Settings
@@ -75,6 +75,125 @@ class _RegistrationEditor(ModalScreen[str | None]):
         return True
 
 
+class _ExportManifestEditor(ModalScreen[None]):
+    """Choose master/media export policy independently for each service."""
+
+    BINDINGS = [
+        Binding("escape", "cancel", "Cancel", show=False),
+        Binding("ctrl+b", "cancel", "Back", show=False),
+    ]
+
+    def __init__(self, sources, store) -> None:
+        super().__init__()
+        self.sources = list(sources)
+        self.store = store
+
+    def compose(self) -> ComposeResult:
+        yield Chrome(show_search=False, show_settings=False)
+        with Vertical(id="modal-body"):
+            yield Static(tr("service.export.title"), classes="ask-title")
+            yield Label(tr("service.export.help"), classes="ask-hint")
+            yield OptionList(id="service-export-list")
+        yield KeyBar(("enter", "change"), ("^b", "back"), ("esc", "cancel"))
+
+    def on_mount(self) -> None:
+        self.rebuild()
+        self.query_one("#service-export-list", OptionList).focus()
+
+    def rebuild(self) -> None:
+        options = self.query_one("#service-export-list", OptionList)
+        previous = options.highlighted
+        options.clear_options()
+        for index, source in enumerate(self.sources):
+            mode = service_catalog.export_manifest_type(
+                self.store,
+                source.service_id,
+            )
+            label = tr(f"service.export.mode.{mode}")
+            options.add_option(
+                Option(
+                    f"  {visual_markup(source.name)}  [$accent]{visual_markup(label)}[/]",
+                    id=f"service-{index}",
+                )
+            )
+        if not self.sources:
+            options.add_option(
+                Option(
+                    f"  [$dim]{tr('service.export.empty')}[/]",
+                    disabled=True,
+                )
+            )
+        else:
+            options.highlighted = min(previous or 0, len(self.sources) - 1)
+
+    def on_option_list_option_selected(
+        self,
+        event: OptionList.OptionSelected,
+    ) -> None:
+        event.stop()
+        ident = str(event.option.id or "")
+        if not ident.startswith("service-"):
+            return
+        index = int(ident.partition("-")[2])
+        if index < 0 or index >= len(self.sources):
+            return
+        source = self.sources[index]
+        setting = Setting(
+            exports.EXPORT_MANIFEST_TYPE_KEY,
+            tr("service.export.mode.title", service=source.name),
+            kind="choice",
+            options=[
+                SettingOption(
+                    exports.MASTER_MANIFEST,
+                    tr("service.export.mode.master"),
+                ),
+                SettingOption(
+                    exports.MEDIA_MANIFEST,
+                    tr("service.export.mode.media"),
+                ),
+            ],
+            default=exports.MASTER_MANIFEST,
+            help=tr("service.export.mode.help"),
+        )
+        from .settings_screen import _ChoiceEditor
+
+        def chosen(value: Any) -> None:
+            if value is None:
+                return
+            service_catalog.update_export_manifest_type(
+                self.store,
+                source.service_id,
+                value,
+            )
+            self.rebuild()
+            self.query_one("#service-export-list", OptionList).highlighted = index
+            self.app.notify(
+                tr(
+                    "service.export.changed",
+                    service=source.name,
+                    mode=tr(
+                        f"service.export.mode.{service_catalog.export_manifest_type(self.store, source.service_id)}"
+                    ),
+                ),
+                timeout=5,
+            )
+
+        self.app.push_screen(
+            _ChoiceEditor(
+                setting,
+                service_catalog.export_manifest_type(self.store, source.service_id),
+            ),
+            chosen,
+        )
+
+    def action_cancel(self) -> None:
+        self.dismiss(None)
+
+    def go_back(self) -> bool:
+        self.dismiss(None)
+        return True
+
+
 class ServicesManagerScreen(Screen[None]):
     """The Services section under global Settings."""
 
@@ -87,7 +206,7 @@ class ServicesManagerScreen(Screen[None]):
     def __init__(self, globals_scope: Settings):
         super().__init__()
         self.globals = globals_scope
-        self._rows = ("fetch", "register", "home")
+        self._rows = ("fetch", "register", "home", "export")
         self._sources = []
 
     def compose(self) -> ComposeResult:
@@ -107,15 +226,15 @@ class ServicesManagerScreen(Screen[None]):
         self._fit_help()
 
     def _fit_help(self) -> None:
-        """Give wrapped help all available rows while preserving the three choices."""
+        """Give wrapped help all available rows while preserving all choices."""
 
         found = self.query("#settings-group-help")
         if not found:
             return
-        # Chrome, masthead, three visible option rows and the key bar need seven
+        # Chrome, masthead, four visible option rows and the key bar need eight
         # rows. The rest can belong to the selected setting's prose, up to a
         # readable twelve-row panel.
-        found.first(Static).styles.max_height = max(2, min(12, self.app.size.height - 7))
+        found.first(Static).styles.max_height = max(2, min(12, self.app.size.height - 8))
 
     def _refresh_sources(self) -> None:
         self._sources = service_catalog.merge_registry_sources(
@@ -130,10 +249,20 @@ class ServicesManagerScreen(Screen[None]):
         home = service_catalog.home_ids(self.app.settings_store)
         count = len(registered)
         shown = len(home & registered)
+        media = sum(
+            service_catalog.export_manifest_type(self.app.settings_store, service_id)
+            == exports.MEDIA_MANIFEST
+            for service_id in registered
+        )
         rows = [
             ("fetch", f"  {tr('setting.fetch_chapters')}  [$accent]{setting_value(self.globals.spec_by_key['fetch_chapters'], self.globals)}[/]"),
             ("register", f"  {tr('service.register.action')}  [$dim]{tr('service.register.summary', registered=count, available=len(self._sources))}[/]"),
             ("home", f"  {tr('service.home.action')}  [$dim]{tr('service.home.summary', shown=shown, registered=count)}[/]"),
+            (
+                "export",
+                f"  {tr('service.export.action')}  "
+                f"[$dim]{tr('service.export.summary', media=media, master=max(0, count - media))}[/]",
+            ),
         ]
         for ident, text in rows:
             options.add_option(Option(text, id=ident))
@@ -145,6 +274,7 @@ class ServicesManagerScreen(Screen[None]):
             "fetch": "setting.fetch_chapters.help",
             "register": "service.register.help",
             "home": "service.home.help",
+            "export": "service.export.help",
         }
         self.query_one("#settings-group-help", Static).update(tr(keys[ident]))
 
@@ -205,6 +335,14 @@ class ServicesManagerScreen(Screen[None]):
                 self.rebuild()
 
             self.app.push_screen(_MultiChoiceEditor(setting, service_catalog.home_ids(self.app.settings_store)), home_done)
+            return
+        if ident == "export":
+            registered = service_catalog.registered_ids(self.app.settings_store)
+            sources = [item for item in self._sources if item.service_id in registered]
+            self.app.push_screen(
+                _ExportManifestEditor(sources, self.app.settings_store),
+                lambda _value: self.rebuild(),
+            )
 
     def action_back(self) -> None:
         self.dismiss(None)

@@ -1935,7 +1935,16 @@ class SessionController:
         screen, headed it "nothing will be downloaded", and asked about tracks on
         it, which is the whole download interface for a job with no download in it.
         """
-        mode = str(self.settings.get("after_resolve", "download"))
+        # Import is already a resolved delivery request.  The global ``after
+        # picking`` setting belongs to a live service flow; applying it here
+        # makes an imported title unexpectedly save another command/export (or
+        # only list tracks) instead of downloading the file the user opened.
+        # Keep imports on the native downloader path regardless of that setting.
+        mode = (
+            "download"
+            if getattr(self, "import_session", False)
+            else str(self.settings.get("after_resolve", "download"))
+        )
         self.post_status(tr("delivery.status.preparing", name=playback.save_name))
 
         # Title and manifest are always reported, whatever the service, whatever
@@ -2289,6 +2298,10 @@ class SessionController:
                     service_id=self.service.ID,
                     service_name=self.service.NAME,
                     path=self.export_path,
+                    export_manifest_type=self.settings.get(
+                        exports.EXPORT_MANIFEST_TYPE_KEY,
+                        exports.MASTER_MANIFEST,
+                    ),
                 )
             except Exception as exc:
                 self.post_error(

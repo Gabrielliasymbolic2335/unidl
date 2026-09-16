@@ -2936,6 +2936,7 @@ class Engine:
         service_id: str = "",
         service_name: str = "",
         path: Path | None = None,
+        export_manifest_type: str = exports.MASTER_MANIFEST,
     ) -> Path:
         """Write, or extend, the portable export for this run. Returns its path.
 
@@ -2949,6 +2950,30 @@ class Engine:
         document and a half-written one is not readable at all.
         """
         service = _folder_name(service_id or playback.title.service or "unknown")
+        manifest_type = exports.normalize_manifest_type(export_manifest_type)
+
+        def export_entry() -> exports.Entry:
+            media_manifest = None
+            if manifest_type == exports.MEDIA_MANIFEST:
+                if playback.is_live:
+                    self.log(
+                        "media-manifest export is unavailable for live playback; "
+                        "saved the refreshable original manifest instead"
+                    )
+                elif tracks is None or tracks.manifest is None:
+                    raise CdmError(
+                        "all-media export needs the parsed manifest inventory"
+                    )
+                else:
+                    media_manifest = self.downloader.export_media_manifest(
+                        tracks.manifest
+                    )
+            return exports.entry_for(
+                playback,
+                tracks,
+                media_manifest=media_manifest,
+            )
+
         def new_document() -> exports.Document:
             from .. import __version__
 
@@ -2972,11 +2997,11 @@ class Engine:
                             f"the export file for this run cannot be read: {exc}"
                         ) from exc
                 document = document or new_document()
-                document.add(exports.entry_for(playback, tracks))
+                document.add(export_entry())
                 return exports.write(target, document)
 
         document = new_document()
-        document.add(exports.entry_for(playback, tracks))
+        document.add(export_entry())
         target = self.config.paths.exports / service / exports.file_name(document)
         with locked_path(target):
             return exports.write(target, document)

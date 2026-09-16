@@ -11,7 +11,8 @@ Changes persist immediately and apply to the next request without a restart.
 ## Services and homepage visibility
 
 Global Settings → **Services** contains the **Fetch chapter metadata** switch,
-**Register a service**, and **Services shown on home**. UniDL discovers service
+**Register a service**, **Services shown on home**, and **Export manifest type**.
+UniDL discovers service
 packages from `src/unidl/services` and shows already registered packages as
 disabled entries. To add a service, copy its completed service package (or
 single-file service module) into that directory, open **Settings → Services →
@@ -20,6 +21,25 @@ you to restart UniDL; the restart is required for the package to be imported in
 the new process and for the registration to take effect on the homepage grid or
 global search. Homepage visibility is a separate checkbox list: an unchecked registered service remains available to
 global search but is omitted from the homepage grid.
+
+**Export manifest type** is stored independently in each registered service's
+`settings.json` namespace. The legacy/default value is **master manifest**: a
+native export retains the original authorized MPD, ISM or HLS entry exactly as
+before. **All media manifests** replaces that entry in the export with UniDL's
+complete parsed video/audio/subtitle inventory, including finite segment URLs,
+byte ranges, encryption fields and generated init data. Import can then open the
+ladder without requesting the original master again. This is useful for services
+whose master URL expires almost immediately, such as friDay, or within minutes,
+such as Canal+ France.
+
+The export choice is a third setting boundary, separate from both provider
+manifest profile and final track selection. Media export records every parsed
+track, not only the tracks selected for that run; the imported title can therefore
+be selected again as long as its required content keys and media URLs are still
+valid. It does not renew CDN authorization: if the segment URLs themselves expire,
+the export expires with them. Live manifests are never frozen as a static segment
+snapshot; even when a service is configured for media export, live playback keeps
+its refreshable original manifest and reports that fallback in the log.
 
 If you installed a minimal distribution with no service packages, the home
 screen shows the same import path and links to Settings. Copy a service into the

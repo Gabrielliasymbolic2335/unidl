@@ -225,7 +225,7 @@ def _video_stream(uri: str, title: dict[str, Any], item: dict[str, Any], title_m
     height = _int_or_none(item.get("height"))
     duration = _item_duration(title, item, url) or _segments_duration(segments)
     return StreamInfo(
-        manifest_type="json",
+        manifest_type=_native_manifest_type(title, item),
         media_type="video",
         url=url,
         original_url=uri,
@@ -268,7 +268,7 @@ def _audio_stream(uri: str, title: dict[str, Any], item: dict[str, Any], title_m
         segments = _track_segments_from_item(item, url, encrypted, scheme, kid, size_bytes)
     duration = _item_duration(title, item, url) or _segments_duration(segments)
     return StreamInfo(
-        manifest_type="json",
+        manifest_type=_native_manifest_type(title, item),
         media_type="audio",
         url=url,
         original_url=uri,
@@ -305,7 +305,7 @@ def _subtitle_stream(uri: str, title: dict[str, Any], item: dict[str, Any], titl
         segments = _track_segments_from_item(item, url, encrypted, scheme, kid, size_bytes)
     duration = _item_duration(title, item, url) or _segments_duration(segments)
     return StreamInfo(
-        manifest_type="json",
+        manifest_type=_native_manifest_type(title, item),
         media_type="subtitle",
         url=url,
         original_url=uri,
@@ -632,21 +632,74 @@ def _explicit_track_segments(
         if not isinstance(value, dict):
             continue
         url = _primary_url(value) or base_url
+        inline_data = _segment_inline_data(value)
+        segment_url = (
+            url
+            if inline_data is not None or urlparse(url).scheme
+            else join_uri(base_url, url)
+        )
         segment_kid = _normalize_kid(value.get("kid") or value.get("key_id") or value.get("keyId")) or kid
         segment_encrypted = _encrypted(value, None, segment_kid) or encrypted
         segment_scheme = _explicit_encryption_scheme(value) or scheme or ("ENC" if segment_encrypted else None)
         segments.append(
             SegmentInfo(
-                url=join_uri(base_url, url),
+                url=segment_url,
                 duration=_float_or_none(value.get("duration") or value.get("duration_seconds") or value.get("durationSeconds")),
                 index=_int_or_none(value.get("index")) if value.get("index") not in {None, ""} else index,
                 byte_range=_parse_byte_range_value(value.get("byte_range") or value.get("byteRange") or value.get("range")),
+                allow_range_status_200=_bool(
+                    value.get("allow_range_status_200")
+                    or value.get("allowRangeStatus200")
+                ),
+                data=inline_data,
                 encrypted=segment_encrypted,
                 encryption_scheme=segment_scheme,
                 key_id=segment_kid,
+                key_uri=_str_or_none(value.get("key_uri") or value.get("keyUri")),
+                key_iv=_segment_key_iv(value.get("key_iv") or value.get("keyIv")),
+                program_date_time=_str_or_none(
+                    value.get("program_date_time") or value.get("programDateTime")
+                ),
+                gap=_bool(value.get("gap")),
+                discontinuity_after=_bool(
+                    value.get("discontinuity_after")
+                    or value.get("discontinuityAfter")
+                ),
+                timeline_time=_int_or_none(
+                    value.get("timeline_time")
+                    if "timeline_time" in value
+                    else value.get("timelineTime")
+                ),
+                timeline_presentation_time=_float_or_none(
+                    value.get("timeline_presentation_time")
+                    if "timeline_presentation_time" in value
+                    else value.get("timelinePresentationTime")
+                ),
             )
         )
     return segments
+
+
+def _segment_inline_data(item: dict[str, Any]) -> bytes | None:
+    value = _str_or_none(item.get("data_base64") or item.get("dataBase64"))
+    if not value:
+        return None
+    try:
+        return base64.b64decode(value, validate=True)
+    except (ValueError, TypeError):
+        return None
+
+
+def _segment_key_iv(value: Any) -> bytes | None:
+    text = _str_or_none(value)
+    if not text:
+        return None
+    if text.lower().startswith("0x"):
+        text = text[2:]
+    try:
+        return bytes.fromhex(text)
+    except ValueError:
+        return None
 
 
 def _explicit_encryption_scheme(item: dict[str, Any]) -> str | None:
@@ -940,6 +993,14 @@ def _track_id(item: dict[str, Any]) -> str | None:
     return _str_or_none(item.get("id") or item.get("track_id") or item.get("trackId") or item.get("downloadable_id"))
 
 
+def _native_manifest_type(title: dict[str, Any], item: dict[str, Any]) -> str:
+    """Restore native semantics only for UniDL's own media snapshots."""
+    if _int_or_none(title.get("_unidl_media_manifest")) != 1:
+        return "json"
+    value = (_str_or_none(item.get("manifest_type") or item.get("manifestType")) or "").lower()
+    return value if value in {"direct", "hls", "m3u", "dash", "ism", "json"} else "json"
+
+
 def _title_meta(title: dict[str, Any]) -> dict[str, Any]:
     season = _int_or_none(title.get("season"))
     episode = _int_or_none(title.get("episode"))
@@ -1006,6 +1067,15 @@ def _extra(title_meta: dict[str, Any], item: dict[str, Any], *, dvr_sequence: di
     if key_id:
         extra.setdefault("key_id", key_id)
         extra.setdefault("key_ids", [key_id])
+    for key in (
+        "audio_atmos",
+        "muxed_audio",
+        "dash_full_base_url_mode",
+        "media_sequence",
+        "target_duration",
+    ):
+        if item.get(key) is not None:
+            extra[key] = item[key]
     return extra
 
 

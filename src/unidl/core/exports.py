@@ -58,6 +58,12 @@ KIND = "unidl-export"
 TAKEN = "+"
 LEFT = "-"
 
+#: Per-service setting for the manifest representation written by native export.
+EXPORT_MANIFEST_TYPE_KEY = "export_manifest_type"
+MASTER_MANIFEST = "master"
+MEDIA_MANIFEST = "media"
+EXPORT_MANIFEST_TYPES = (MASTER_MANIFEST, MEDIA_MANIFEST)
+
 
 class ExportError(RuntimeError):
     """A file that is not an export, or not one this build can read."""
@@ -73,6 +79,12 @@ def _json_safe(value: Any) -> bool:
     except (TypeError, ValueError):
         return False
     return True
+
+
+def normalize_manifest_type(value: Any) -> str:
+    """Return a supported native export mode, preserving the legacy default."""
+    normalized = str(value or "").strip().lower()
+    return normalized if normalized in EXPORT_MANIFEST_TYPES else MASTER_MANIFEST
 
 
 def _title_document(title: Title) -> dict[str, Any]:
@@ -426,7 +438,12 @@ class Document:
         }
 
 
-def entry_for(playback: Playback, tracks: Any = None) -> Entry:
+def entry_for(
+    playback: Playback,
+    tracks: Any = None,
+    *,
+    media_manifest: dict[str, Any] | None = None,
+) -> Entry:
     """Everything about ``playback`` worth writing down, as one entry.
 
     The ladder is stored the way the command file stores it - one row per stream,
@@ -458,6 +475,13 @@ def entry_for(playback: Playback, tracks: Any = None) -> Entry:
             manifest_url = ""
         elif getattr(source, "reference", None):
             manifest_url = _text(source.reference)
+    if media_manifest is not None:
+        # Media mode deliberately replaces the short-lived entry manifest with
+        # a complete inert track/segment inventory. Keep request headers and
+        # resolved keys on the Entry, but never retain the master as a fallback:
+        # doing so would make an expired URL look usable again on import.
+        json_manifest = dict(media_manifest)
+        manifest_url = ""
     return Entry(
         save_name=playback.save_name,
         title=playback.title,

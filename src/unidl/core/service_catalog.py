@@ -16,6 +16,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from . import exports
 from .settings import SettingsStore
 
 GLOBAL_SCOPE = "@global"
@@ -296,6 +297,31 @@ def update_home(store: SettingsStore, service_ids: Iterable[str]) -> None:
     store.save()
 
 
+def export_manifest_type(store: SettingsStore, service_id: str) -> str:
+    """The native export representation selected for one service."""
+    value = store.values_for(str(service_id or "").strip().lower()).get(
+        exports.EXPORT_MANIFEST_TYPE_KEY
+    )
+    return exports.normalize_manifest_type(value)
+
+
+def update_export_manifest_type(
+    store: SettingsStore,
+    service_id: str,
+    value: Any,
+) -> None:
+    """Persist one service's native export representation immediately."""
+    service_id = str(service_id or "").strip().lower()
+    if not service_id:
+        raise ValueError("a service id is required")
+    store.put(
+        service_id,
+        exports.EXPORT_MANIFEST_TYPE_KEY,
+        exports.normalize_manifest_type(value),
+    )
+    store.save()
+
+
 __all__ = [
     "HOME_KEY",
     "REGISTERED_KEY",
@@ -303,9 +329,11 @@ __all__ = [
     "discover_sources",
     "merge_registry_sources",
     "ensure_state",
+    "export_manifest_type",
     "home_ids",
     "registered_ids",
     "source_root",
     "update_home",
+    "update_export_manifest_type",
     "update_registration",
 ]

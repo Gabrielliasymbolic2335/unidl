@@ -19,8 +19,10 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import copy
 import shlex
 from collections.abc import Sequence
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 
 from . import cli
@@ -55,6 +57,7 @@ __all__ = [
     "option_choices",
     "command_line",
     "download",
+    "hydrate_streams",
     "key_ids",
     "load_streams",
     "stream_key_ids",
@@ -371,6 +374,49 @@ def load_streams(options: ParseOptions) -> list[StreamInfo]:
         cli._append_input_params(streams, args.input)
     cli._filter_ad_segments(streams, args.ad_keyword, args=args, colors=False)
     return cli._sort_streams(cli._drop_streams(streams, args))
+
+
+def hydrate_streams(
+    options: ParseOptions,
+    streams: Sequence[StreamInfo],
+) -> list[StreamInfo]:
+    """Return a detached ladder with every finite HLS media playlist read.
+
+    The ordinary picker deliberately leaves HLS child playlists unopened unless
+    details were requested; download then hydrates only the selected children.
+    A portable media-manifest export has the opposite requirement: it must take
+    a complete snapshot of *all* renditions while the short-lived master is
+    still authorized.  This facade reuses the exact download hydration rules,
+    but works on deep copies so exporting never mutates the picker or its track
+    identities.
+    """
+    args = _namespace(options.argv())
+    cli._configure_proxy(args)
+    headers = normalize_headers(args.header)
+    detached = copy.deepcopy(list(streams))
+
+    def hydrate(stream: StreamInfo) -> StreamInfo:
+        return cli._hydrate_stream(
+            stream,
+            headers=headers,
+            no_probe=args.no_probe,
+            base_url=args.base_url,
+        )
+
+    # A master can expose dozens of video/audio/subtitle children, while some
+    # provider masters are valid for only a few seconds.  Read independent
+    # media playlists concurrently and preserve their original ladder order.
+    workers = min(8, len(detached))
+    if workers > 1:
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            hydrated = list(pool.map(hydrate, detached))
+    else:
+        hydrated = [hydrate(stream) for stream in detached]
+
+    if args.append_url_params or cli.should_append_child_url_params(args.input):
+        cli._append_input_params(hydrated, args.input)
+    cli._filter_ad_segments(hydrated, args.ad_keyword, args=args, colors=False)
+    return hydrated
 
 
 def build_argv(
