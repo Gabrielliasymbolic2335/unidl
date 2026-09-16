@@ -55,15 +55,15 @@ The project is designed around three clear layers:
 - Progress, replay-window information, segment counts, estimated size and
   cancellation state in the TUI.
 
-### DRM, vaults and credentials
+### Vaults and credentials
 
-- Local Widevine, PlayReady and MonaLisa device contracts with strict system
+- Local CDM device contracts with strict system
   matching.
 - Optional remote CDM endpoints for systems that support remote challenge and
   licence parsing.
 - Local SQLite key vaults and compatible remote key vaults, with multi-vault
   read/write policies, service scoping and manual KID:key entry.
-- Service-local licence transport: the shared DRM layer creates challenges and
+- Service-local licence transport: the shared layer creates challenges and
   parses responses, while each service owns its endpoint, headers and request
   format.
 - Independent credential slots, cookie profiles, token stores and refresh
